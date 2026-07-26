@@ -456,10 +456,10 @@ const mockBridge: AgentGateBridge = {
         : ["gpt-5.2-codex", "gpt-5.2"];
   },
 
-  async probeProfile(id: string) {
+  async probeProfile(id: string, modelOverride?: string) {
     const source = mockProfiles.find((profile) => profile.id === id);
     if (!source) throw new Error("方案不存在");
-    const model = source.model || source.availableModels[0];
+    const model = modelOverride?.trim() || source.model || source.availableModels[0];
     if (!model) throw new Error("请先设置模型 ID 或识别模型后再实测");
     await new Promise((resolve) => setTimeout(resolve, 700));
     return {

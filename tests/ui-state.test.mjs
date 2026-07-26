@@ -15,6 +15,17 @@ const {
   topLevelSessionIds,
 } = await import("../src/components/SessionsView");
 const { SettingsView } = await import("../src/components/SettingsView");
+const {
+  StatusView,
+  parseStoredProbeRecords,
+  parseStoredProbeModels,
+  probeAvailability,
+  probeModelOptions,
+  probeProfilesTogether,
+  probeState,
+  storedAutoProbeEnabled,
+  storedProbeInterval,
+} = await import("../src/components/StatusView");
 const { I18nProvider, MESSAGES } = await import("../src/i18n");
 const {
   computeDivergence,
@@ -276,6 +287,99 @@ describe("frontend state boundaries", () => {
 
     expect(html).toContain("tier-good");
     expect(html).toContain("99.0%");
+  });
+
+  it("渠道实测只把成功的慢响应标为延迟，任何不可用都标为故障", () => {
+    const sample = (ok, totalMs) => ({
+      ok,
+      firstByteMs: Math.min(totalMs, 200),
+      totalMs,
+      model: "gpt-test",
+      checkedAt: new Date().toISOString(),
+    });
+
+    expect(probeState(sample(true, 4_999))).toBe("healthy");
+    expect(probeState(sample(true, 5_000))).toBe("limited");
+    expect(probeState({ ...sample(false, 200), statusCode: 408 })).toBe("unhealthy");
+    expect(probeState({ ...sample(false, 200), statusCode: 429 })).toBe("unhealthy");
+    expect(probeState({ ...sample(false, 200), statusCode: 503 })).toBe("unhealthy");
+    expect(probeState(sample(false, 200))).toBe("unhealthy");
+    expect(probeAvailability([sample(true, 200), sample(false, 200), sample(true, 200)])).toBe(67);
+  });
+
+  it("状态页隐藏时仍保持挂载", () => {
+    const html = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "zh" },
+      React.createElement(StatusView, { profiles: [], active: false }),
+    ));
+
+    expect(html).toContain('class="page-scroll status-page"');
+    expect(html).toContain('hidden=""');
+  });
+
+  it("同一轮渠道实测会同时发出，并独立保留单个失败", async () => {
+    const pending = new Map();
+    const called = [];
+    const batch = probeProfilesTogether([{ id: "first" }, { id: "second" }], (id) => {
+      called.push(id);
+      return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+    });
+
+    expect(called).toEqual(["first", "second"]);
+    pending.get("first").resolve({
+      ok: true,
+      firstByteMs: 80,
+      totalMs: 120,
+      model: "gpt-test",
+      checkedAt: "2026-07-26T00:00:00.000Z",
+    });
+    pending.get("second").reject(new Error("second unavailable"));
+
+    const result = await batch;
+    expect(result[0].result.ok).toBe(true);
+    expect(result[1].error).toContain("second unavailable");
+  });
+
+  it("状态页恢复暂停、间隔和历史记录时不会恢复伪检测状态", () => {
+    expect(storedAutoProbeEnabled("false")).toBe(false);
+    expect(storedAutoProbeEnabled(null)).toBe(true);
+    expect(storedProbeInterval("300000")).toBe(300_000);
+    expect(storedProbeInterval("1234")).toBe(120_000);
+
+    const sample = {
+      ok: true,
+      firstByteMs: 80,
+      totalMs: 120,
+      model: "gpt-test",
+      checkedAt: "2026-07-26T00:00:00.000Z",
+    };
+    const restored = parseStoredProbeRecords(JSON.stringify({
+      first: { samples: [sample], checking: true },
+      invalid: { samples: [{ ok: "yes" }] },
+    }));
+
+    expect(restored.first).toEqual({
+      samples: [sample],
+      result: sample,
+      checking: false,
+      error: undefined,
+    });
+    expect(restored.invalid).toBeUndefined();
+  });
+
+  it("状态页按渠道恢复检测模型，并合并默认与已识别模型", () => {
+    const source = profile("00000000-0000-4000-8000-000000000012", "Models", "codex");
+    source.model = "gpt-default";
+    source.availableModels = ["gpt-default", "gpt-cheap"];
+    source.endpoints[0].models = ["gpt-cheap", "gpt-fast"];
+
+    expect(probeModelOptions(source)).toEqual(["gpt-default", "gpt-cheap", "gpt-fast"]);
+    expect(parseStoredProbeModels(JSON.stringify({
+      [source.id]: "  gpt-cheap  ",
+      empty: "",
+      invalid: 123,
+    }))).toEqual({ [source.id]: "gpt-cheap" });
   });
 
   it("非流式请求即使残留 firstToken 字段也只显示 TTFB", () => {

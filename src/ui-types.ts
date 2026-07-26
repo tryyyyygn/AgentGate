@@ -1,4 +1,4 @@
-export type View = "overview" | "keyring" | "activity" | "sessions" | "settings";
+export type View = "overview" | "keyring" | "status" | "activity" | "sessions" | "settings";
 
 export type RequestFilter = "all" | "active" | "completed" | "failed";
 

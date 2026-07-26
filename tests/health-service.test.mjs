@@ -351,6 +351,19 @@ describe("渠道实测", () => {
     expect(body.max_tokens).toBe(16);
   });
 
+  it("允许为单次实测覆盖模型且不改方案默认值", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ id: "msg_1" }, { status: 200 }));
+    const service = probeService(baseProfile, fetchMock);
+    const result = await service.probeProfile(
+      "11111111-1111-4111-8111-111111111111",
+      "claude-haiku-4-5",
+    );
+
+    expect(result.model).toBe("claude-haiku-4-5");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).model).toBe("claude-haiku-4-5");
+    expect(baseProfile.model).toBe("claude-sonnet-4-5");
+  });
+
   it("Responses 实测命中 /responses 且失败时提取上游错误", async () => {
     const fetchMock = vi.fn(async () => jsonResponse(
       { error: { message: "Invalid API key provided" } },
@@ -371,7 +384,10 @@ describe("渠道实测", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe(`${PRIMARY_URL}/v1/responses`);
     expect(init.headers.authorization).toBe(`Bearer ${API_KEY}`);
-    expect(JSON.parse(init.body).input).toBe("hi");
+    expect(JSON.parse(init.body)).toMatchObject({
+      input: "hi",
+      instructions: "Reply with OK.",
+    });
   });
 
   it("未设置模型时拒绝实测", async () => {

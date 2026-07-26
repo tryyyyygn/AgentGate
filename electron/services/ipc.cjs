@@ -229,8 +229,8 @@ function registerIpcHandlers({
   handle(CHANNELS.checkProfileHealth, async (_event, id) => {
     return healthService.testHealth(id)
   })
-  handle(CHANNELS.probeProfile, async (_event, id) => {
-    return healthService.probeProfile(id)
+  handle(CHANNELS.probeProfile, async (_event, id, model) => {
+    return healthService.probeProfile(id, model)
   })
   handle(CHANNELS.applyProfile, async (_event, id, targets) => {
     const result = await applyService.assignProfile(id, targets)
