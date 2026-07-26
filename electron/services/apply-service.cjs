@@ -428,14 +428,78 @@ class ApplyService {
       ...(lifecycle.resumeTargets || []),
       ...(lifecycle.engaged || []),
     ])]
-    if ((lifecycle.engaged || []).length > 0) {
-      await this.stopGateway({
-        targets: lifecycle.engaged,
-        preserveResumeIntent: true,
-      })
+    const staleEngaged = [...new Set(lifecycle.engaged || [])]
+    if (!start) {
+      if (staleEngaged.length > 0) {
+        return this.stopGateway({
+          targets: staleEngaged,
+          preserveResumeIntent: true,
+        })
+      }
+      return this.gatewayService.getPublicState()
     }
-    if (start && desired.length > 0) {
-      return this.startGateway({ targets: desired, preserveResumeIntent: true })
+
+    const pending = new Set(desired.filter((target) => !staleEngaged.includes(target)))
+    const failures = []
+    if (staleEngaged.length > 0) {
+      // Windows 关机可能跳过 before-quit；客户端此时仍指向原端口，先恢复监听，
+      // 不要先还原直连再写回网关，以免与登录时启动的客户端争抢配置文件。
+      await this.gatewayService.start({
+        engage: staleEngaged,
+        resumeTargets: desired,
+      })
+
+      const gatewayState = this.gatewayService.getPublicState()
+      let baselineData
+      try {
+        baselineData = GatewayBaselineStoreSchema.parse(await this.gatewayBaselineStore.read())
+      } catch (error) {
+        for (const target of staleEngaged) failures.push({ target, error })
+      }
+
+      if (baselineData) {
+        const allGroups = this.gatewayService.getRouteGroups()
+        const released = new Set()
+        for (const target of staleEngaged) {
+          const groups = allGroups
+            .filter((group) => group.targets.includes(target))
+            .map((group) => ({ ...group, targets: [target] }))
+          try {
+            const recovery = await this._prepareGatewayRecovery({
+              groups,
+              gatewayState,
+              localToken: this.gatewayService.localToken,
+              baselineData,
+            })
+            if (recovery.skippedTargets.includes(target)) released.add(target)
+          } catch (error) {
+            // 冲突时继续服务原本的本地地址，但绝不覆盖外部改动。
+            failures.push({ target, error })
+          }
+        }
+        if (released.size > 0) {
+          const retained = staleEngaged.filter((target) => !released.has(target))
+          await this.gatewayService.setEngagedTargets(retained, {
+            preserveResumeIntent: true,
+            resumeTargets: desired,
+          })
+          for (const target of released) pending.add(target)
+        }
+      }
+    }
+
+    for (const target of pending) {
+      try {
+        await this.startGateway({ targets: [target], preserveResumeIntent: true })
+      } catch (error) {
+        failures.push({ target, error })
+      }
+    }
+    if (failures.length > 0) {
+      const details = failures.map(({ target, error }) => (
+        `${target}: ${error instanceof Error ? error.message : String(error)}`
+      )).join('; ')
+      throw new Error(`Could not restore gateway targets on launch: ${details}`)
     }
     return this.gatewayService.getPublicState()
   }

@@ -449,7 +449,8 @@ if (!hasSingleInstanceLock) {
       })
     } catch (error) {
       // 配置冲突时仍需启动窗口和托盘，让用户能看到并修复问题。
-      launchGatewayError = error instanceof Error ? error.message : String(error)
+      const reason = error instanceof Error ? error.message : String(error)
+      launchGatewayError = `Agent;Gate could not restore the gateway on launch: ${reason}`
     }
     registerIpcHandlers({
       ipcMain,
@@ -457,6 +458,7 @@ if (!hasSingleInstanceLock) {
       isTrustedSender: isTrustedIpcSender,
       isShuttingDown: () => quitting,
       ...services,
+      startupError: launchGatewayError,
       requestUpdateInstall: () => {
         installUpdateOnQuit = true
         app.quit()
@@ -475,12 +477,6 @@ if (!hasSingleInstanceLock) {
     })
     await createWindow({ silent: silentLaunch })
     createTray()
-    if (launchGatewayError && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(CHANNELS.stateChanged, {
-        type: 'auto-switch-error',
-        message: `Agent;Gate could not restore the gateway on launch: ${launchGatewayError}`,
-      })
-    }
     services.autoSwitchService.start((event) => {
       if (!mainWindow || mainWindow.isDestroyed()) return
       mainWindow.webContents.send(CHANNELS.stateChanged, event)
