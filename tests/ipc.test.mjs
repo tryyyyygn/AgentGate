@@ -177,6 +177,13 @@ describe("IPC bootstrap", () => {
     });
     expect(requestMonitor.getActiveRequestsSnapshot).toHaveBeenCalledTimes(1);
   });
+
+  it("启动恢复错误随 bootstrap 返回，避免静默启动时丢失一次性事件", async () => {
+    const startupError = "Could not restore gateway targets on launch: claude: configuration is busy";
+    const { handlers } = createHarness({ startupError });
+
+    await expect(handlers.get(CHANNELS.bootstrap)()).resolves.toMatchObject({ startupError });
+  });
 });
 
 describe("IPC sessions", () => {

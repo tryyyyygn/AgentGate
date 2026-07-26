@@ -82,6 +82,7 @@ function registerIpcHandlers({
   updateService,
   requestMonitor,
   sessionService,
+  startupError,
   requestUpdateInstall,
 }) {
   if (typeof isTrustedSender !== 'function') {
@@ -165,6 +166,7 @@ function registerIpcHandlers({
         ? { activeRequestsRevision: requestSnapshot.activeRequestsRevision }
         : {}),
       ...(updateService ? { update: updateService.getPublicState() } : {}),
+      ...(startupError ? { startupError } : {}),
     }
   }
 

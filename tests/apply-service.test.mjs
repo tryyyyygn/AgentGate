@@ -80,6 +80,226 @@ describe("engaged route boundaries", () => {
   });
 });
 
+describe("gateway launch reconciliation", () => {
+  function launchService({ engaged, resumeTargets }) {
+    const profileId = "00000000-0000-4000-8000-000000000703";
+    const profile = {
+      id: profileId,
+      name: "启动恢复",
+      protocol: "openai-responses",
+      baseUrl: "https://relay.example/v1",
+      model: "gpt-5.6-sol",
+      authMode: "bearer",
+      targets: ["codex"],
+    };
+    let state = {
+      status: "stopped",
+      host: "127.0.0.1",
+      port: 17863,
+      targets: ["codex", "claude"],
+      engaged: [...engaged],
+      routes: [
+        { target: "codex", profileId },
+        { target: "claude", profileId },
+      ],
+      localBaseUrls: {
+        codex: "http://127.0.0.1:17863/codex/route-token",
+        claude: "http://127.0.0.1:17863/claude",
+      },
+    };
+    const gatewayService = {
+      persisted: { encryptedToken: testVault.encrypt("local-token") },
+      getLifecycleState: vi.fn(() => ({ engaged: [...engaged], resumeTargets: [...resumeTargets] })),
+      getPublicState: vi.fn(() => state),
+      getRouteGroups: vi.fn(() => [{ profileId, targets: ["codex", "claude"] }]),
+      getLocalBaseUrl: vi.fn((target) => state.localBaseUrls[target]),
+      start: vi.fn(async ({ engage, resumeTargets: nextResumeTargets }) => {
+        state = { ...state, status: "running", engaged: [...engage] };
+        return { ...state, resumeTargets: nextResumeTargets };
+      }),
+      setEngagedTargets: vi.fn(async (next) => {
+        state = { ...state, engaged: [...next] };
+        return state;
+      }),
+    };
+    const adapter = {
+      paths: [],
+      gatewayOwnership: vi.fn(async () => "owned"),
+      buildRestore: vi.fn(async () => []),
+    };
+    const applyService = new ApplyService({
+      profileService: { getStored: vi.fn(async () => profile) },
+      adapters: { codex: adapter, claude: adapter },
+      historyStore: {},
+      backupDirectory: path.join(root, "backups"),
+      vault: testVault,
+      gatewayService,
+      gatewayBaselineStore: {
+        read: vi.fn(async () => ({
+          version: 2,
+          baselines: Object.fromEntries(engaged.map((target) => [target, {
+            capturedAt: new Date().toISOString(),
+            encryptedState: testVault.encrypt("{}"),
+          }])),
+        })),
+      },
+    });
+    return { applyService, gatewayService };
+  }
+
+  it("强制结束后仍由网关接管的配置直接恢复监听，不先还原再重写", async () => {
+    const { applyService, gatewayService } = launchService({
+      engaged: ["codex"],
+      resumeTargets: ["codex"],
+    });
+    const stopGateway = vi.spyOn(applyService, "stopGateway").mockResolvedValue({ status: "stopped" });
+    const startGateway = vi.spyOn(applyService, "startGateway");
+
+    await expect(applyService.reconcileGatewayOnLaunch({ start: true }))
+      .resolves.toMatchObject({ status: "running", engaged: ["codex"] });
+
+    expect(stopGateway).not.toHaveBeenCalled();
+    expect(startGateway).not.toHaveBeenCalled();
+    expect(gatewayService.start).toHaveBeenCalledWith({
+      engage: ["codex"],
+      resumeTargets: ["codex"],
+    });
+  });
+
+  it("关机中途已恢复直连但状态未落盘时重新执行接管", async () => {
+    const { applyService, gatewayService } = launchService({
+      engaged: ["codex"],
+      resumeTargets: ["codex"],
+    });
+    applyService.adapters.codex.gatewayOwnership.mockResolvedValue("released");
+    const startGateway = vi.spyOn(applyService, "startGateway")
+      .mockResolvedValue({ status: "running", engaged: ["codex"] });
+
+    await expect(applyService.reconcileGatewayOnLaunch({ start: true }))
+      .resolves.toMatchObject({ status: "running" });
+
+    expect(gatewayService.setEngagedTargets).toHaveBeenCalledWith([], {
+      preserveResumeIntent: true,
+      resumeTargets: ["codex"],
+    });
+    expect(startGateway).toHaveBeenCalledWith({
+      targets: ["codex"],
+      preserveResumeIntent: true,
+    });
+  });
+
+  it("真实 Codex 残留接管在新进程中只恢复监听，不提交配置还原事务", async () => {
+    const codexPath = path.join(root, ".codex", "config.toml");
+    const original = `model_provider = "custom"
+
+[model_providers.custom]
+base_url = "https://direct.example/v1"
+wire_api = "responses"
+`;
+    await fs.mkdir(path.dirname(codexPath), { recursive: true });
+    await fs.writeFile(codexPath, original, "utf8");
+
+    const { profileStore, historyStore } = createTestStores(root);
+    const profileService = new ProfileService(profileStore, testVault);
+    const gatewayStore = new JsonFileStore(
+      path.join(root, "data", "gateway.json"),
+      GatewayStoreSchema,
+      defaultGatewayStore,
+    );
+    const gatewayBaselineStore = new JsonFileStore(
+      path.join(root, "data", "gateway-recovery.json"),
+      GatewayBaselineStoreSchema,
+      defaultGatewayBaselineStore,
+    );
+    const adapters = createAdapters({
+      claude: { config: path.join(root, ".claude", "settings.json") },
+      codex: { config: codexPath },
+      opencode: {
+        config: path.join(root, ".config", "opencode", "opencode.json"),
+        auth: path.join(root, ".local", "share", "opencode", "auth.json"),
+      },
+      gemini: {
+        config: path.join(root, ".gemini", "settings.json"),
+        env: path.join(root, ".gemini", ".env"),
+      },
+    });
+    const makeApplyService = (gatewayService) => new ApplyService({
+      profileService,
+      adapters,
+      historyStore,
+      backupDirectory: path.join(root, "data", "backups"),
+      vault: testVault,
+      gatewayService,
+      gatewayBaselineStore,
+    });
+    const firstGateway = new GatewayService({ profileService, store: gatewayStore, vault: testVault });
+    const firstApply = makeApplyService(firstGateway);
+    const profile = await profileService.save({
+      name: "重启恢复",
+      protocol: "openai-responses",
+      baseUrl: "https://relay.example/v1",
+      apiKey: "sk-restart",
+      model: "gpt-5.6-sol",
+      authMode: "bearer",
+      targets: ["codex"],
+    });
+    await firstApply.assignProfile(profile.id, ["codex"]);
+    await firstApply.startGateway({ port: 0 });
+    const takenOver = await fs.readFile(codexPath, "utf8");
+    await firstGateway.shutdown();
+
+    const restartedGateway = new GatewayService({ profileService, store: gatewayStore, vault: testVault });
+    const restartedApply = makeApplyService(restartedGateway);
+    await restartedGateway.initialize({ start: false });
+    const commitDrafts = vi.spyOn(restartedApply, "_commitDrafts");
+    try {
+      await restartedApply.reconcileGatewayOnLaunch({ start: true });
+      expect(restartedGateway.getPublicState()).toMatchObject({
+        status: "running",
+        engaged: ["codex"],
+      });
+      expect(commitDrafts).not.toHaveBeenCalled();
+      expect(await fs.readFile(codexPath, "utf8")).toBe(takenOver);
+    } finally {
+      await restartedApply.stopGateway().catch(() => {});
+      await restartedGateway.stopAndWait().catch(() => {});
+    }
+    expect(await fs.readFile(codexPath, "utf8")).toBe(original);
+  });
+
+  it("逐个恢复未接管目标，一个失败仍继续尝试其余目标", async () => {
+    const { applyService } = launchService({
+      engaged: [],
+      resumeTargets: ["claude", "codex"],
+    });
+    const attempts = [];
+    vi.spyOn(applyService, "startGateway").mockImplementation(async ({ targets }) => {
+      attempts.push(targets[0]);
+      if (targets[0] === "claude") throw new Error("Claude configuration is busy");
+      return { status: "running", engaged: ["codex"] };
+    });
+
+    await expect(applyService.reconcileGatewayOnLaunch({ start: true }))
+      .rejects.toThrow("claude: Claude configuration is busy");
+    expect(attempts).toEqual(["claude", "codex"]);
+  });
+
+  it("关闭启动恢复时仍清理强制结束留下的接管配置", async () => {
+    const { applyService } = launchService({
+      engaged: ["codex"],
+      resumeTargets: ["codex"],
+    });
+    const stopped = { status: "stopped", engaged: [] };
+    const stopGateway = vi.spyOn(applyService, "stopGateway").mockResolvedValue(stopped);
+
+    await expect(applyService.reconcileGatewayOnLaunch({ start: false })).resolves.toBe(stopped);
+    expect(stopGateway).toHaveBeenCalledWith({
+      targets: ["codex"],
+      preserveResumeIntent: true,
+    });
+  });
+});
+
 describe("dynamic adapter snapshots", () => {
   it("retries when an adapter changes its managed path set while sources are read", async () => {
     const metaPath = path.join(root, "configLibrary", "_meta.json");

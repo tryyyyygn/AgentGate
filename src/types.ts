@@ -287,6 +287,8 @@ export interface BootstrapData {
   gatewayRecovery?: {
     skippedTargets: ClientTarget[];
   };
+  /** 主进程启动恢复失败；首次 bootstrap 后由界面提示。 */
+  startupError?: string;
 }
 
 /** 渠道实测结果：发送最小消息后的可用性、时延与上游计量摘要。 */

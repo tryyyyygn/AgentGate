@@ -109,6 +109,7 @@ export function useAgentGateController(): AgentGateController {
   const requestSequence = useRef(0);
   const commandLock = useRef(false);
   const testingRef = useRef(new Set<string>());
+  const shownStartupError = useRef<string | undefined>(undefined);
 
   const loadLatest = useCallback(async (): Promise<boolean> => {
     const requestId = ++requestSequence.current;
@@ -160,6 +161,26 @@ export function useAgentGateController(): AgentGateController {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const message = data.startupError;
+    if (!message || shownStartupError.current === message) return undefined;
+    const show = () => {
+      if (document.visibilityState === "hidden") return;
+      shownStartupError.current = message;
+      setToast({ kind: "error", message });
+      window.removeEventListener("focus", show);
+      document.removeEventListener("visibilitychange", show);
+    };
+    show();
+    if (shownStartupError.current === message) return undefined;
+    window.addEventListener("focus", show);
+    document.addEventListener("visibilitychange", show);
+    return () => {
+      window.removeEventListener("focus", show);
+      document.removeEventListener("visibilitychange", show);
+    };
+  }, [data.startupError]);
 
   useEffect(() => api.onStateChanged((event: StateChangedEvent) => {
     if (event.type === "active-requests-changed") {
