@@ -64,7 +64,7 @@ with sync_playwright() as playwright:
     contexts = browser.contexts
     assert contexts and contexts[0].pages, "打包版未创建浏览器页面"
     page = contexts[0].pages[0]
-    page.locator(".hero h1").wait_for()
+    page.locator(".brand-mark").wait_for()
 
     created = page.evaluate(
         """

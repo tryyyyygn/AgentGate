@@ -338,7 +338,13 @@ function probeMessageBody(profile, model) {
     return { model, max_tokens: 16, messages: [{ role: 'user', content: 'hi' }] }
   }
   if (profile.protocol === PROTOCOL.OPENAI_RESPONSES) {
-    return { model, input: 'hi', max_output_tokens: 16, stream: false }
+    return {
+      model,
+      input: 'hi',
+      instructions: 'Reply with OK.',
+      max_output_tokens: 16,
+      stream: false,
+    }
   }
   if (profile.protocol === PROTOCOL.OPENAI_CHAT) {
     return { model, messages: [{ role: 'user', content: 'hi' }], max_tokens: 16, stream: false }
@@ -361,6 +367,14 @@ function probeErrorMessage(payload) {
   return compact.length > MAX_PROBE_ERROR_LENGTH
     ? `${compact.slice(0, MAX_PROBE_ERROR_LENGTH)}…`
     : compact
+}
+
+function normalizeProbeModel(value) {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') throw new Error('检测模型 ID 无效')
+  const model = value.trim()
+  if (!model || model.length > 240) throw new Error('检测模型 ID 无效')
+  return model
 }
 
 /**
@@ -463,15 +477,19 @@ class HealthService {
    * （正文读取完成）。结果只返回状态与时延摘要，不包含模型输出内容。
    *
    * @param {string} id 方案 UUID。
+   * @param {string | undefined} modelOverride 仅用于本次实测的模型 ID，不修改方案。
    * @returns {Promise<object>} { ok, statusCode?, firstByteMs, totalMs, model, message? }。
    * @throws 方案不存在、Key 不可解密或未设置模型时抛出错误。
    */
-  async probeProfile(id) {
+  async probeProfile(id, modelOverride) {
     const { profile, apiKey } = await this.profileService.getConnection(id)
     const activeEndpoint = profile.endpoints.find((endpoint) => (
       endpoint.url.replace(/\/+$/, '') === profile.baseUrl.replace(/\/+$/, '')
     )) || profile.endpoints[0]
-    const model = (profile.model || '').trim() || activeEndpoint?.models?.[0] || ''
+    const model = normalizeProbeModel(modelOverride)
+      || (profile.model || '').trim()
+      || activeEndpoint?.models?.[0]
+      || ''
     if (!model) throw new Error('请先设置模型 ID 或识别模型后再实测')
 
     const controller = new AbortController()

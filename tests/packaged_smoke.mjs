@@ -119,9 +119,25 @@ const gatewayPort = await availablePort()
 const client = await CdpClient.connect(cdpOrigin)
 try {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    if (await client.evaluate("Boolean(document.querySelector('.hero h1'))")) break
+    if (await client.evaluate("Boolean(document.querySelector('.brand-mark'))")) break
     await new Promise((resolve) => setTimeout(resolve, 100))
     if (attempt === 39) throw new Error('Packaged Keydeck UI did not become ready')
+  }
+  const statusIntervals = await client.evaluate(`new Promise((resolve) => {
+    document.querySelectorAll('.top-nav button')[2]?.click()
+    setTimeout(() => {
+      const select = document.querySelector('.status-interval select')
+      resolve({
+        values: [...(select?.options || [])].map((option) => Number(option.value)),
+        selected: Number(select?.value),
+      })
+    }, 50)
+  })`)
+  if (JSON.stringify(statusIntervals) !== JSON.stringify({
+    values: [120000, 300000, 600000],
+    selected: 120000,
+  })) {
+    throw new Error('Packaged status probe intervals are incorrect')
   }
   await client.evaluate("window.agentgate.updateSettings({ theme: 'dark', experimentalToolBridge: false })")
 

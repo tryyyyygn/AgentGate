@@ -16,7 +16,42 @@
 export type Locale = "zh" | "zh-TW" | "ja" | "en";
 
 export interface Messages {
-  nav: { overview: string; keys: string; stream: string; config: string };
+  nav: { overview: string; keys: string; status: string; stream: string; config: string };
+  status: {
+    title: string;
+    subtitle: string;
+    auto: string;
+    pause: string;
+    resume: string;
+    refresh: string;
+    interval: string;
+    every2m: string;
+    every5m: string;
+    every10m: string;
+    enabled: string;
+    disabled: string;
+    monitor: string;
+    channel: string;
+    model: string;
+    state: string;
+    history: string;
+    defaultModel: string;
+    probeModelLabel: string;
+    enableProbe: string;
+    disableProbe: string;
+    healthy: string;
+    limited: string;
+    unhealthy: string;
+    unknown: string;
+    availability: string;
+    response: string;
+    firstByte: string;
+    lastCheck: string;
+    checking: string;
+    noSamples: string;
+    requestNote: string;
+    unsupported: string;
+  };
   gateway: {
     online: string;
     offline: string;
@@ -301,7 +336,42 @@ export interface Messages {
 }
 
 const zh: Messages = {
-  nav: { overview: "概览", keys: "密钥", stream: "动态", config: "设置" },
+  nav: { overview: "概览", keys: "密钥", status: "状态", stream: "动态", config: "设置" },
+  status: {
+    title: "渠道状态",
+    subtitle: "使用真实 Key 周期性发送最小请求",
+    auto: "自动检测",
+    pause: "暂停",
+    resume: "继续",
+    refresh: "立即检测",
+    interval: "检测间隔",
+    every2m: "2 分钟",
+    every5m: "5 分钟",
+    every10m: "10 分钟",
+    enabled: "启用",
+    disabled: "已关闭",
+    monitor: "监测",
+    channel: "渠道",
+    model: "模型",
+    state: "状态",
+    history: "最近记录",
+    defaultModel: "默认 · {model}",
+    probeModelLabel: "「{name}」检测模型",
+    enableProbe: "启用「{name}」监测",
+    disableProbe: "关闭「{name}」监测",
+    healthy: "正常",
+    limited: "延迟",
+    unhealthy: "故障",
+    unknown: "未检测",
+    availability: "近一小时可用率",
+    response: "总耗时",
+    firstByte: "首包",
+    lastCheck: "最近检测",
+    checking: "检测中",
+    noSamples: "等待首轮实测",
+    requestNote: "每次使用当前方案的活动 URL 与模型发送最小消息",
+    unsupported: "当前版本不支持 Key 实测",
+  },
   gateway: {
     online: "网关运行中",
     offline: "网关已关闭",
@@ -587,7 +657,42 @@ const zh: Messages = {
 };
 
 const zhTW: Messages = {
-  nav: { overview: "總覽", keys: "API Key", stream: "動態", config: "設定" },
+  nav: { overview: "總覽", keys: "API Key", status: "狀態", stream: "動態", config: "設定" },
+  status: {
+    title: "Channel Status",
+    subtitle: "使用真實 Key 定期送出最小請求",
+    auto: "自動檢測",
+    pause: "暫停",
+    resume: "繼續",
+    refresh: "立即檢測",
+    interval: "檢測間隔",
+    every2m: "2 分鐘",
+    every5m: "5 分鐘",
+    every10m: "10 分鐘",
+    enabled: "啟用",
+    disabled: "已關閉",
+    monitor: "監測",
+    channel: "渠道",
+    model: "模型",
+    state: "狀態",
+    history: "近期紀錄",
+    defaultModel: "預設 · {model}",
+    probeModelLabel: "「{name}」檢測模型",
+    enableProbe: "啟用「{name}」監測",
+    disableProbe: "關閉「{name}」監測",
+    healthy: "正常",
+    limited: "延遲",
+    unhealthy: "故障",
+    unknown: "未檢測",
+    availability: "近一小時可用率",
+    response: "總耗時",
+    firstByte: "首包",
+    lastCheck: "最近檢測",
+    checking: "檢測中",
+    noSamples: "等待第一輪實測",
+    requestNote: "每次使用目前 Profile 的 active URL 與 Model 送出最小訊息",
+    unsupported: "目前版本不支援 Key 實測",
+  },
   gateway: {
     online: "Gateway 運行中",
     offline: "Gateway 已關閉",
@@ -873,7 +978,42 @@ const zhTW: Messages = {
 };
 
 const ja: Messages = {
-  nav: { overview: "概要", keys: "API キー", stream: "ストリーム", config: "設定" },
+  nav: { overview: "概要", keys: "API キー", status: "状態", stream: "ストリーム", config: "設定" },
+  status: {
+    title: "チャネル状態",
+    subtitle: "実際の Key で最小リクエストを定期送信",
+    auto: "自動チェック",
+    pause: "一時停止",
+    resume: "再開",
+    refresh: "今すぐチェック",
+    interval: "間隔",
+    every2m: "2 分",
+    every5m: "5 分",
+    every10m: "10 分",
+    enabled: "有効",
+    disabled: "停止中",
+    monitor: "監視",
+    channel: "チャネル",
+    model: "モデル",
+    state: "状態",
+    history: "直近の履歴",
+    defaultModel: "既定 · {model}",
+    probeModelLabel: "「{name}」のチェック用モデル",
+    enableProbe: "「{name}」の監視を有効化",
+    disableProbe: "「{name}」の監視を停止",
+    healthy: "正常",
+    limited: "遅延",
+    unhealthy: "障害",
+    unknown: "未計測",
+    availability: "直近 1 時間の可用率",
+    response: "合計",
+    firstByte: "初バイト",
+    lastCheck: "最終チェック",
+    checking: "チェック中",
+    noSamples: "初回チェック待ち",
+    requestNote: "現在の Profile の active URL と Model に最小メッセージを送信",
+    unsupported: "このバージョンでは Key 実測に未対応",
+  },
   gateway: {
     online: "ゲートウェイ稼働中",
     offline: "ゲートウェイ停止中",
@@ -1159,7 +1299,42 @@ const ja: Messages = {
 };
 
 const en: Messages = {
-  nav: { overview: "OVERVIEW", keys: "KEYS", stream: "STREAM", config: "CONFIG" },
+  nav: { overview: "OVERVIEW", keys: "KEYS", status: "STATUS", stream: "STREAM", config: "CONFIG" },
+  status: {
+    title: "CHANNEL STATUS",
+    subtitle: "SEND A MINIMAL REQUEST WITH EACH REAL KEY",
+    auto: "AUTO PROBE",
+    pause: "PAUSE",
+    resume: "RESUME",
+    refresh: "PROBE NOW",
+    interval: "INTERVAL",
+    every2m: "2 MIN",
+    every5m: "5 MIN",
+    every10m: "10 MIN",
+    enabled: "ENABLED",
+    disabled: "DISABLED",
+    monitor: "MONITOR",
+    channel: "CHANNEL",
+    model: "MODEL",
+    state: "STATE",
+    history: "RECENT HISTORY",
+    defaultModel: "DEFAULT · {model}",
+    probeModelLabel: "Probe model for {name}",
+    enableProbe: "Enable monitoring for {name}",
+    disableProbe: "Disable monitoring for {name}",
+    healthy: "HEALTHY",
+    limited: "HIGH LATENCY",
+    unhealthy: "DOWN",
+    unknown: "UNTESTED",
+    availability: "1H AVAILABILITY",
+    response: "TOTAL",
+    firstByte: "TTFB",
+    lastCheck: "LAST PROBE",
+    checking: "PROBING",
+    noSamples: "AWAITING FIRST PROBE",
+    requestNote: "Each probe uses the profile's active URL and model with a minimal message",
+    unsupported: "Key probing is not available in this build",
+  },
   gateway: {
     online: "GATEWAY ONLINE",
     offline: "GATEWAY OFFLINE",

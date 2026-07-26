@@ -401,7 +401,7 @@ export interface AgentGateBridge {
   /** 无凭据检测全部 URL 的可达性和延迟，不识别模型。 */
   checkProfileHealth(id: string): Promise<Profile>;
   /** 用真实 Key 发送最小消息实测渠道可用性与时延。旧版 preload 可能暂未提供。 */
-  probeProfile?(id: string): Promise<ProbeResult>;
+  probeProfile?(id: string, model?: string): Promise<ProbeResult>;
   /** 将方案分配给指定客户端，缺失 targets 时使用方案的全部适用客户端。 */
   applyProfile(id: string, targets?: ClientTarget[]): Promise<ApplyResult>;
   /** 在当前配置未被外部修改时恢复指定事务的加密快照。 */

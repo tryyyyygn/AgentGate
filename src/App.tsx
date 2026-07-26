@@ -1,4 +1,4 @@
-import { Activity, KeyRound, LayoutDashboard, MessagesSquare, Minus, Settings, ShieldCheck, Square, X } from "lucide-react";
+import { Activity, KeyRound, LayoutDashboard, MessagesSquare, Minus, Radio, Settings, ShieldCheck, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, ReactElement } from "react";
 import { ActivityView } from "./components/ActivityView";
@@ -10,6 +10,7 @@ import { OverviewView } from "./components/OverviewView";
 import { ProfileEditor } from "./components/ProfileEditor";
 import { RollingNumber } from "./components/RollingNumber";
 import { SettingsView } from "./components/SettingsView";
+import { StatusView } from "./components/StatusView";
 import { Toast } from "./components/Toast";
 import { APP_VERSION, DEFAULT_SETTINGS } from "./config";
 import { useAgentGateController } from "./hooks/useAgentGateController";
@@ -27,6 +28,7 @@ interface EditorState {
 const NAV_ICONS: Record<View, ReactElement> = {
   overview: <LayoutDashboard size={13} />,
   keyring: <KeyRound size={13} />,
+  status: <Radio size={13} />,
   activity: <Activity size={13} />,
   sessions: <MessagesSquare size={13} />,
   settings: <Settings size={13} />,
@@ -35,12 +37,13 @@ const NAV_ICONS: Record<View, ReactElement> = {
 const NAV_LABEL: Record<View, (m: Messages) => string> = {
   overview: (m) => m.nav.overview,
   keyring: (m) => m.nav.keys,
+  status: (m) => m.nav.status,
   activity: (m) => m.nav.stream,
   sessions: (m) => m.sessions.title,
   settings: (m) => m.nav.config,
 };
 
-const NAV_ORDER: View[] = ["overview", "keyring", "activity", "sessions", "settings"];
+const NAV_ORDER: View[] = ["overview", "keyring", "status", "activity", "sessions", "settings"];
 
 /** 与 CSS 里 .theme-shifting 的过渡时长保持一致。 */
 const THEME_SHIFT_MS = 460;
@@ -299,6 +302,10 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
           onRetry={() => void controller.refresh()}
         />
       )}
+      <StatusView
+        profiles={controller.data.profiles}
+        active={view === "status"}
+      />
       {view === "activity" && <ActivityView requests={requestRecords} />}
       <SessionsView
         active={view === "sessions"}

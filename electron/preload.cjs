@@ -49,9 +49,10 @@ const CHANNELS = Object.freeze({
  * - deleteProfile(id)                 -> agentgate:delete-profile
  * - copyProfileKey(id)                -> agentgate:copy-profile-key
  * - testProfile(id)                   -> agentgate:test-profile
- * - testProfileDraft(input)           -> agentgate:test-profile-draft
- * - checkProfileHealth(id)            -> agentgate:check-profile-health
- * - applyProfile(id, targets?)        -> agentgate:apply-profile（只分配本地网关路由）
+  * - testProfileDraft(input)           -> agentgate:test-profile-draft
+  * - checkProfileHealth(id)            -> agentgate:check-profile-health
+  * - probeProfile(id, model?)           -> agentgate:probe-profile
+  * - applyProfile(id, targets?)        -> agentgate:apply-profile（只分配本地网关路由）
  * - undoHistory(id)                   -> agentgate:undo-history
  * - openConfig(target)                -> agentgate:open-config
  * - startGateway({ port? })           -> agentgate:start-gateway（使用已分配路由）
@@ -69,7 +70,7 @@ const api = Object.freeze({
   testProfile: (id) => ipcRenderer.invoke(CHANNELS.testProfile, id),
   testProfileDraft: (input) => ipcRenderer.invoke(CHANNELS.testProfileDraft, input),
   checkProfileHealth: (id) => ipcRenderer.invoke(CHANNELS.checkProfileHealth, id),
-  probeProfile: (id) => ipcRenderer.invoke(CHANNELS.probeProfile, id),
+  probeProfile: (id, model) => ipcRenderer.invoke(CHANNELS.probeProfile, id, model),
   applyProfile: (id, targets) => ipcRenderer.invoke(CHANNELS.applyProfile, id, targets),
   undoHistory: (id) => ipcRenderer.invoke(CHANNELS.undoHistory, id),
   openConfig: (target) => ipcRenderer.invoke(CHANNELS.openConfig, target),
