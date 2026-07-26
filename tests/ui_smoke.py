@@ -119,17 +119,30 @@ with sync_playwright() as playwright:
     assert page.locator(".keyring-expand.open").count() == 0
     page.set_viewport_size({"width": 1280, "height": 800})
 
-    # 新建方案弹窗开合
+    # 放弃新建方案后，应用背景必须恢复交互
     page.get_by_role("button", name="NEW", exact=True).first.click()
-    page.get_by_role("dialog", name="New connection profile").wait_for()
-    page.keyboard.press("Escape")
-    page.get_by_role("heading", name="Attractor Fields", exact=True).wait_for()
+    editor = page.get_by_role("dialog", name="New connection profile")
+    editor.wait_for()
+    editor.get_by_role("textbox", name="Profile name", exact=True).fill("discard regression")
+    editor.get_by_role("button", name="CANCEL", exact=True).click()
+    discard = page.get_by_role("alertdialog", name="Discard unsaved changes?")
+    discard.get_by_role("button", name="DISCARD", exact=True).click()
+    assert editor.count() == 0
+    assert page.locator(".topbar").evaluate(
+        "node => !node.inert && node.getAttribute('aria-hidden') === null"
+    )
+    assert page.get_by_role("main", name="Attractor Fields").evaluate(
+        "node => !node.inert && node.getAttribute('aria-hidden') === null"
+    )
+    page.get_by_role("button", name="OVERVIEW", exact=True).click()
+    page.locator(".hero h1").wait_for()
 
     # 动态：实时请求流（活跃请求徽标会并入按钮可访问名，不能精确匹配）
-    page.get_by_role("button", name="STREAM").click()
-    page.get_by_role("heading", name="Stream", exact=True).wait_for()
+    page.locator(".top-nav").get_by_role("button", name="STREAM").click()
+    stream = page.get_by_role("main", name="Stream", exact=True)
+    stream.get_by_role("heading", name="Stream", exact=True).wait_for()
     assert page.locator(".request-row").count() == 3
-    assert "LAST 3 DAYS" in page.locator(".head-note").inner_text()
+    assert "LAST 3 DAYS" in stream.locator(".head-note").inner_text()
     page.get_by_role("radio", name="DONE", exact=True).click()
     assert page.locator(".request-row .tint-complete").count() == 2
     page.screenshot(path=str(OUTPUT_DIR / "activity-complete-1280x800.png"), full_page=False)

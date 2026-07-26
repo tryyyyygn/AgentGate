@@ -53,6 +53,7 @@ export function ConfirmDialog({
           ariaHidden: element.getAttribute("aria-hidden"),
         });
       }
+      if (parent.classList.contains("editor-layer")) break;
       branch = parent;
       if (parent === document.body) break;
     }
