@@ -7,6 +7,7 @@ const { CHANNELS, registerIpcHandlers } = require("../electron/services/ipc.cjs"
 function createHarness({ gatewayRoutes = [], gatewayStatus, ...overrides } = {}) {
   const handlers = new Map();
   const trace = [];
+  const stopGateway = vi.fn().mockResolvedValue({ skippedTargets: ["codex"] });
   const profile = {
     id: "00000000-0000-4000-8000-000000000901",
     name: "IPC 夹具",
@@ -56,7 +57,7 @@ function createHarness({ gatewayRoutes = [], gatewayStatus, ...overrides } = {})
     applyService: {
       listHistory: vi.fn().mockResolvedValue([]),
       listVerifiedTargets: vi.fn().mockResolvedValue([]),
-      withLifecycleLock: vi.fn().mockImplementation((operation) => operation({})),
+      withLifecycleLock: vi.fn().mockImplementation((operation) => operation({ stopGateway })),
       assignProfile: vi.fn().mockImplementation(async (_id, targets) => ({
         assignedTargets: targets || profile.targets,
         gateway: {
@@ -68,7 +69,7 @@ function createHarness({ gatewayRoutes = [], gatewayStatus, ...overrides } = {})
         },
       })),
       startGateway: vi.fn().mockResolvedValue(undefined),
-      stopGateway: vi.fn().mockResolvedValue({ skippedTargets: ["codex"] }),
+      stopGateway,
     },
     gatewayService: {
       // 形状必须跟真的 GatewayService.getPublicState() 一致——上面那条测试会拿真货来比对。
@@ -253,20 +254,50 @@ describe("IPC gateway coordination", () => {
     expect(result).toMatchObject({ id: profile.id });
   });
 
-  it.each([
-    ["protocol", { protocol: "openai-chat" }],
-  ])("活动路由在保存前拒绝修改 %s", async (field, change) => {
+  it("活动路由修改协议时先恢复客户端并解除旧路由", async () => {
     const route = { target: "codex", profileId: "00000000-0000-4000-8000-000000000901" };
-    const { handlers, profile, dependencies } = createHarness({ gatewayRoutes: [route] });
+    const { handlers, trace, profile, dependencies } = createHarness({ gatewayRoutes: [route] });
 
     await expect(handlers.get(CHANNELS.saveProfile)(
       null,
-      saveInput(profile, change),
-    )).rejects.toThrow(field);
+      saveInput(profile, { protocol: "openai-chat" }),
+    )).resolves.toMatchObject({ protocol: "openai-chat" });
 
+    expect(dependencies.applyService.stopGateway).toHaveBeenCalledWith({ targets: ["codex"] });
+    expect(dependencies.gatewayService.unassignRoutes).toHaveBeenCalledWith(["codex"]);
+    expect(dependencies.gatewayService.restoreRoutes).not.toHaveBeenCalled();
+    expect(trace).toEqual(["save", "refresh"]);
+  });
+
+  it("活动路由恢复失败时不修改协议", async () => {
+    const route = { target: "codex", profileId: "00000000-0000-4000-8000-000000000901" };
+    const { handlers, profile, dependencies } = createHarness({ gatewayRoutes: [route] });
+    dependencies.applyService.stopGateway.mockRejectedValueOnce(new Error("configuration conflict"));
+
+    await expect(handlers.get(CHANNELS.saveProfile)(
+      null,
+      saveInput(profile, { protocol: "openai-chat" }),
+    )).rejects.toThrow("configuration conflict");
+
+    expect(dependencies.gatewayService.unassignRoutes).not.toHaveBeenCalled();
     expect(dependencies.profileService.save).not.toHaveBeenCalled();
-    expect(dependencies.gatewayService.refreshProfile).not.toHaveBeenCalled();
-    expect(dependencies.healthService.test).not.toHaveBeenCalled();
+  });
+
+  it("解除活动路由后保存失败会恢复路由分配", async () => {
+    const route = { target: "codex", profileId: "00000000-0000-4000-8000-000000000901" };
+    const { handlers, profile, dependencies } = createHarness({ gatewayRoutes: [route] });
+    const saveError = new Error("profile store is locked");
+    dependencies.profileService.save.mockRejectedValueOnce(saveError);
+
+    await expect(handlers.get(CHANNELS.saveProfile)(
+      null,
+      saveInput(profile, { protocol: "openai-chat" }),
+    )).rejects.toThrow(saveError.message);
+
+    expect(dependencies.gatewayService.restoreRoutes).toHaveBeenCalledWith({
+      targets: ["codex"],
+      routes: { codex: profile.id },
+    });
   });
 
   it("活动路由允许 URL、Key、模型和名称热刷新", async () => {
@@ -285,17 +316,17 @@ describe("IPC gateway coordination", () => {
     expect(trace).toEqual(["save", "refresh"]);
   });
 
-  it("等待生命周期锁时新激活的路由拒绝修改协议", async () => {
-    const field = "protocol";
+  it("等待生命周期锁时新激活的路由也会先恢复再修改协议", async () => {
     const change = { protocol: "openai-chat" };
     const routes = [];
+    const stopGateway = vi.fn().mockResolvedValue({ skippedTargets: [] });
     let enterLock;
     const lockReady = new Promise((resolve) => {
       enterLock = resolve;
     });
     const withLifecycleLock = vi.fn().mockImplementation(async (operation) => {
       await lockReady;
-      return operation({});
+      return operation({ stopGateway });
     });
     const { handlers, profile, dependencies } = createHarness({
       gatewayRoutes: routes,
@@ -311,8 +342,9 @@ describe("IPC gateway coordination", () => {
     routes.push({ target: "codex", profileId: profile.id });
     enterLock();
 
-    await expect(saving).rejects.toThrow(field);
-    expect(dependencies.profileService.save).not.toHaveBeenCalled();
+    await expect(saving).resolves.toMatchObject(change);
+    expect(stopGateway).toHaveBeenCalledWith({ targets: ["codex"] });
+    expect(dependencies.gatewayService.unassignRoutes).toHaveBeenCalledWith(["codex"]);
   });
 
   it("等待生命周期锁时新激活的路由仍允许保存 URL", async () => {
@@ -459,13 +491,28 @@ describe("IPC gateway coordination", () => {
     expect(dependencies.gatewayService.restoreRoutes).not.toHaveBeenCalled();
   });
 
-  it("网关运行时拒绝删除仍被路由引用的方案", async () => {
+  it("网关运行时删除方案会先恢复客户端并解除路由", async () => {
     const route = { target: "codex", profileId: "00000000-0000-4000-8000-000000000901" };
     const { handlers, profile, dependencies } = createHarness({ gatewayRoutes: [route] });
 
     await expect(handlers.get(CHANNELS.deleteProfile)(null, profile.id))
-      .rejects.toThrow("turn off the local gateway");
-    expect(dependencies.gatewayService.unassignRoutes).not.toHaveBeenCalled();
-    expect(dependencies.profileService.delete).not.toHaveBeenCalled();
+      .resolves.toEqual({ ok: true });
+    expect(dependencies.applyService.stopGateway).toHaveBeenCalledWith({ targets: ["codex"] });
+    expect(dependencies.gatewayService.unassignRoutes).toHaveBeenCalledWith(["codex"]);
+    expect(dependencies.profileService.delete).toHaveBeenCalledWith(profile.id);
+    expect(dependencies.gatewayService.restoreRoutes).not.toHaveBeenCalled();
+  });
+
+  it("解除活动路由后删除失败会恢复路由分配", async () => {
+    const route = { target: "codex", profileId: "00000000-0000-4000-8000-000000000901" };
+    const { handlers, profile, dependencies } = createHarness({ gatewayRoutes: [route] });
+    dependencies.profileService.delete.mockRejectedValueOnce(new Error("profile store is locked"));
+
+    await expect(handlers.get(CHANNELS.deleteProfile)(null, profile.id))
+      .rejects.toThrow("profile store is locked");
+    expect(dependencies.gatewayService.restoreRoutes).toHaveBeenCalledWith({
+      targets: ["codex"],
+      routes: { codex: profile.id },
+    });
   });
 });

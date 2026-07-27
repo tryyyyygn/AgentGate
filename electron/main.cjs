@@ -205,7 +205,6 @@ function createServices() {
     store: settingsStore,
     app,
     onChanged: (settings) => {
-      gatewayService.setExperimentalToolBridgeEnabled?.(settings.experimentalToolBridge)
       if (!mainWindow || mainWindow.isDestroyed()) return
       mainWindow.webContents.send(CHANNELS.stateChanged, {
         type: 'settings-changed',
@@ -440,7 +439,6 @@ if (!hasSingleInstanceLock) {
     services = createServices()
     const settings = await services.settingsService.initialize()
     await services.requestMonitor.initialize()
-    services.gatewayService.setExperimentalToolBridgeEnabled?.(settings.experimentalToolBridge)
     await services.gatewayService.initialize({ start: false })
     let launchGatewayError
     try {

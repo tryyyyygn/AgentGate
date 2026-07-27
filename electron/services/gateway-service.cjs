@@ -8,11 +8,7 @@ const { TARGETS } = require('./schemas.cjs')
 const { SerialExecutor } = require('./storage.cjs')
 const {
   MAX_REQUEST_BODY_BYTES,
-  convertRequestBuffer,
-  convertResponseObject,
-  createResponsesToolBridgeJsonTransform,
   createResponsesSseJsonTransform,
-  createResponsesToolBridgeTransform,
 } = require('./responses-tool-bridge.cjs')
 const { extractRequestMetadata } = require('./request-monitor-service.cjs')
 
@@ -34,7 +30,7 @@ const RESPONSES_FALLBACK_BODY_LIMIT_BYTES = 32 * 1024 * 1024
 const RESPONSES_FALLBACK_BODY_SLOTS = 4
 const RESPONSES_FALLBACK_IDLE_TIMEOUT_MS = 5 * 60_000
 const RESPONSES_FALLBACK_TOTAL_TIMEOUT_MS = 30 * 60_000
-const BRIDGE_INVALIDATED_HEADERS = [
+const TRANSFORMED_RESPONSE_INVALIDATED_HEADERS = [
   'content-length',
   'etag',
   'digest',
@@ -43,7 +39,7 @@ const BRIDGE_INVALIDATED_HEADERS = [
   'content-md5',
 ]
 const AGGREGATED_RESPONSE_INVALIDATED_HEADERS = [
-  ...BRIDGE_INVALIDATED_HEADERS,
+  ...TRANSFORMED_RESPONSE_INVALIDATED_HEADERS,
   'content-encoding',
 ]
 const MAX_MODEL_METADATA_LENGTH = 240
@@ -496,14 +492,12 @@ function anthropicCountErrorSupportsFallback(statusCode) {
   return statusCode === 501
 }
 
-function forceResponsesStreaming(body, bridgeEnabled) {
-  let payloadBody = body
+function forceResponsesStreaming(body) {
   try {
-    if (bridgeEnabled) payloadBody = convertRequestBuffer(payloadBody)
-    const payload = JSON.parse(payloadBody.toString('utf8'))
+    const payload = JSON.parse(body.toString('utf8'))
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)
       || payload.stream === true) {
-      return { body: payloadBody, changed: false }
+      return { body, changed: false }
     }
     payload.stream = true
     return {
@@ -512,16 +506,11 @@ function forceResponsesStreaming(body, bridgeEnabled) {
     }
   } catch {
     // 已经消费了请求体时，仍把原字节交给上游；只有可确认的 JSON 才改写。
-    return { body: payloadBody, changed: false }
+    return { body, changed: false }
   }
 }
 
-/**
- * 可选的本地原样转发网关。
- *
- * 默认路径不解析请求或响应正文。只有用户显式开启 Codex 工具兼容实验时，
- * `/responses` 才会经过受限的 exec 工具协议转换。真实 Key 只写入上游请求头。
- */
+/** 本地回环网关；仅兼容同步 Responses 时需要聚合上游 SSE。 */
 class GatewayService {
   constructor({
     profileService,
@@ -565,7 +554,6 @@ class GatewayService {
     this.anthropicCountFallbacks = new Map()
     this.anthropicCountBodyActive = 0
     this.responsesFallbackBodyActive = 0
-    this.experimentalToolBridgeEnabled = false
   }
 
   async initialize({ start = true } = {}) {
@@ -833,10 +821,6 @@ class GatewayService {
       : undefined)
     if (!routeToken) throw new Error('Codex gateway route token is unavailable')
     return localBaseUrl(this.persisted.port, target, routeToken)
-  }
-
-  setExperimentalToolBridgeEnabled(enabled) {
-    this.experimentalToolBridgeEnabled = enabled === true
   }
 
   getActiveRequests() {
@@ -1300,11 +1284,6 @@ class GatewayService {
       })
     } catch {}
     const normalizedResponsesSuffix = suffix.replace(/\/+$/, '') || '/'
-    const bridgeEnabled = this.experimentalToolBridgeEnabled
-      && target === 'codex'
-      && connection.profile.protocol === 'openai-responses'
-      && request.method === 'POST'
-      && normalizedResponsesSuffix === '/responses'
     const responsesSyncCandidate = target === 'codex'
       && connection.profile.protocol === 'openai-responses'
       && request.method === 'POST'
@@ -1323,7 +1302,7 @@ class GatewayService {
     // Responses 上游默认走流式。客户端仍可要求同步；这种情况下网关把 SSE
     // 收拢成 JSON 再返回，避免每个新端点都先用 stream=false 失败一次。
     const needsResponsesFallbackBody = responsesSyncCandidate
-    if (bridgeEnabled || anthropicCountRequest || needsResponsesFallbackBody) {
+    if (anthropicCountRequest || needsResponsesFallbackBody) {
       if (anthropicCountRequest) {
         releaseAnthropicCountBodySlot = this._tryAcquireAnthropicCountBody()
         if (!releaseAnthropicCountBodySlot) {
@@ -1352,9 +1331,8 @@ class GatewayService {
               : MAX_REQUEST_BODY_BYTES,
         )
         originalRequestBody = requestBody
-        if (bridgeEnabled) requestBody = convertRequestBuffer(requestBody)
         if (needsResponsesFallbackBody) {
-          const forced = forceResponsesStreaming(requestBody, false)
+          const forced = forceResponsesStreaming(requestBody)
           requestBody = forced.body
           responsesStreamFallback = forced.changed
         }
@@ -1363,11 +1341,9 @@ class GatewayService {
         releaseAnthropicCountBodySlot?.()
         endMonitor(request.aborted ? 'aborted' : 'failed')
         rejectRequest(request, response, 502,
-          bridgeEnabled
-            ? 'Responses tool bridge request conversion failed'
-            : anthropicCountRequest
-              ? 'Anthropic token count compatibility request failed'
-              : 'Responses streaming compatibility request failed')
+          anthropicCountRequest
+            ? 'Anthropic token count compatibility request failed'
+            : 'Responses streaming compatibility request failed')
         return
       }
       if (request.aborted || response.destroyed) {
@@ -1467,21 +1443,18 @@ class GatewayService {
       clearTimeout(upstreamTimer)
       const contentType = String(upstreamResponse.headers['content-type'] || '')
       const responseIsEventStream = contentType.toLowerCase().includes('text/event-stream')
-      const responseIsJson = contentType.toLowerCase().includes('json')
       const aggregatedResponse = responsesStreamFallback && responseIsEventStream
-      const bridgeResponse = bridgeEnabled && (responseIsEventStream || responseIsJson)
       const contentEncoding = String(upstreamResponse.headers['content-encoding'] || '')
         .trim()
         .toLowerCase()
-      const transformedResponse = bridgeResponse || aggregatedResponse
-      const unsupportedBridgeEncoding = transformedResponse
+      const unsupportedTransformedEncoding = aggregatedResponse
         && contentEncoding
         && contentEncoding !== 'identity'
       const responseHeaders = stripHeaders(
         upstreamResponse.headers,
         aggregatedResponse
           ? AGGREGATED_RESPONSE_INVALIDATED_HEADERS
-          : bridgeResponse ? BRIDGE_INVALIDATED_HEADERS : [],
+          : [],
       )
       const upstreamStatus = upstreamResponse.statusCode || 502
       const updateCountCapability = (useCountFallback) => {
@@ -1550,7 +1523,7 @@ class GatewayService {
         fallbackTotalTimer.unref?.()
       }
 
-      if (unsupportedBridgeEncoding) {
+      if (unsupportedTransformedEncoding) {
         clearFallbackTimers()
         endMonitor('failed')
         upstreamResponse.resume()
@@ -1582,7 +1555,7 @@ class GatewayService {
           } catch {}
         })
       }
-      if (!bridgeResponse && !aggregatedResponse) {
+      if (!aggregatedResponse) {
         upstreamResponse.once('end', () => endMonitor())
         response.writeHead(
           upstreamResponse.statusCode || 502,
@@ -1604,13 +1577,7 @@ class GatewayService {
       if (aggregatedResponse) {
         response.setHeader('content-type', 'application/json; charset=utf-8')
       }
-      const transform = aggregatedResponse
-        ? createResponsesSseJsonTransform({
-            ...(bridgeEnabled ? { mapResponse: convertResponseObject } : {}),
-          })
-        : responseIsEventStream
-          ? createResponsesToolBridgeTransform()
-          : createResponsesToolBridgeJsonTransform()
+      const transform = createResponsesSseJsonTransform()
       transform.pipe(response)
       pipeline(upstreamResponse, transform, (error) => {
         if (!error) {
@@ -1623,9 +1590,7 @@ class GatewayService {
         if (!response.headersSent) {
           for (const name of response.getHeaderNames()) response.removeHeader(name)
           response.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
-          response.end(aggregatedResponse
-            ? 'Responses streaming compatibility conversion failed'
-            : 'Responses tool bridge response conversion failed')
+          response.end('Responses streaming compatibility conversion failed')
         } else if (!response.destroyed) {
           response.destroy(error)
         }

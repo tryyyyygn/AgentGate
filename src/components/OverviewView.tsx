@@ -289,7 +289,6 @@ export function OverviewView({
           <div className="section-head">
             <span className="kicker">{m.overview.clients}</span>
             <h2>{m.overview.worldLines}</h2>
-            <span className="head-hint">{m.overview.clickToJump}</span>
           </div>
           <div className="socket-grid">
             {CLIENT_TARGET_ORDER.map((target, index) => {
@@ -347,6 +346,9 @@ export function OverviewView({
                     <span className="socket-no">{String(index + 1).padStart(2, "0")}</span>
                     <span className="socket-title">
                       <strong>{CLIENT_META[target].label.toUpperCase()}</strong>
+                      {target !== "codex" && (
+                        <small>{m.overview.experimental}</small>
+                      )}
                     </span>
                     <span className="socket-profile">
                       <span className="socket-profile-line">

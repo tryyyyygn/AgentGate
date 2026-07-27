@@ -9,10 +9,10 @@ import {
   RefreshCw,
   TriangleAlert,
   X,
+  Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
-import { PROTOCOL_META } from "../config";
 import { useI18n } from "../i18n";
 import { api } from "../lib/api";
 import { describeError, formatDuration, relativeTime } from "../lib/format";
@@ -21,14 +21,15 @@ import type { Profile, ProbeResult } from "../types";
 const DEFAULT_INTERVAL_MS = 120_000;
 const MAX_SAMPLES = 60;
 const PULSE_SLOTS = 24;
-const LIMITED_RESPONSE_MS = 5_000;
+const HEALTHY_RESPONSE_MS = 5_000;
+const SMOOTH_RESPONSE_MS = 10_000;
 const DISABLED_PROFILES_KEY = "agentgate.status.disabled-profiles.v1";
 const AUTO_PROBE_KEY = "agentgate.status.auto-probe.v1";
 const PROBE_INTERVAL_KEY = "agentgate.status.probe-interval.v1";
 const PROBE_RECORDS_KEY = "agentgate.status.records.v1";
 const PROBE_MODELS_KEY = "agentgate.status.probe-models.v1";
 
-type ProbeState = "healthy" | "limited" | "unhealthy" | "unknown";
+type ProbeState = "healthy" | "smooth" | "limited" | "unhealthy" | "unknown";
 
 interface ProbeRecord {
   samples: ProbeResult[];
@@ -45,6 +46,9 @@ interface ProbeBatchItem<T> {
 
 interface StatusViewProps {
   profiles: ReadonlyArray<Profile>;
+  busy?: boolean;
+  busyId?: string;
+  onApply?: (id: string, targets: Profile["targets"]) => void;
   active?: boolean;
 }
 
@@ -66,7 +70,14 @@ export function storedProbeInterval(value: string | null): number {
 export function probeState(result: ProbeResult | undefined): ProbeState {
   if (!result) return "unknown";
   if (!result.ok) return "unhealthy";
-  return result.totalMs >= LIMITED_RESPONSE_MS ? "limited" : "healthy";
+  if (result.totalMs <= HEALTHY_RESPONSE_MS) return "healthy";
+  if (result.totalMs <= SMOOTH_RESPONSE_MS) return "smooth";
+  return "limited";
+}
+
+export function probeCountdownSeconds(nextProbeAt: number, now = Date.now()): number {
+  if (!Number.isFinite(nextProbeAt) || !Number.isFinite(now)) return 0;
+  return Math.max(0, Math.ceil((nextProbeAt - now) / 1_000));
 }
 
 export function probeAvailability(samples: ReadonlyArray<ProbeResult>): number | undefined {
@@ -77,13 +88,17 @@ export function probeAvailability(samples: ReadonlyArray<ProbeResult>): number |
 export async function probeProfilesTogether<T extends { id: string }>(
   profiles: ReadonlyArray<T>,
   probe: (id: string) => Promise<ProbeResult>,
+  onSettled?: (item: ProbeBatchItem<T>) => void,
 ): Promise<Array<ProbeBatchItem<T>>> {
   return Promise.all(profiles.map(async (profile) => {
+    let item: ProbeBatchItem<T>;
     try {
-      return { profile, result: await probe(profile.id) };
+      item = { profile, result: await probe(profile.id) };
     } catch (error) {
-      return { profile, error: describeError(error) };
+      item = { profile, error: describeError(error) };
     }
+    onSettled?.(item);
+    return item;
   }));
 }
 
@@ -212,6 +227,7 @@ function ProbePulse({ samples, label }: { samples: ReadonlyArray<ProbeResult>; l
 
 function stateLabel(state: ProbeState, m: ReturnType<typeof useI18n>["m"]): string {
   if (state === "healthy") return m.status.healthy;
+  if (state === "smooth") return m.status.smooth;
   if (state === "limited") return m.status.limited;
   if (state === "unhealthy") return m.status.unhealthy;
   return m.status.unknown;
@@ -219,12 +235,19 @@ function stateLabel(state: ProbeState, m: ReturnType<typeof useI18n>["m"]): stri
 
 function StateIcon({ state }: { state: ProbeState }): ReactElement {
   if (state === "healthy") return <Check size={12} />;
+  if (state === "smooth") return <Check size={12} />;
   if (state === "limited") return <TriangleAlert size={12} />;
   if (state === "unhealthy") return <X size={12} />;
   return <Radio size={12} />;
 }
 
-export function StatusView({ profiles, active = true }: StatusViewProps): ReactElement {
+export function StatusView({
+  profiles,
+  busy = false,
+  busyId,
+  onApply,
+  active = true,
+}: StatusViewProps): ReactElement {
   const { locale, m, fill } = useI18n();
   const [records, setRecords] = useState<Record<string, ProbeRecord>>(readProbeRecords);
   const [disabledIds, setDisabledIds] = useState<ReadonlySet<string>>(readDisabledProfileIds);
@@ -232,6 +255,8 @@ export function StatusView({ profiles, active = true }: StatusViewProps): ReactE
   const [auto, setAuto] = useState(() => storedAutoProbeEnabled(readStoredValue(AUTO_PROBE_KEY)));
   const [intervalMs, setIntervalMs] = useState(() => storedProbeInterval(readStoredValue(PROBE_INTERVAL_KEY)));
   const [running, setRunning] = useState(false);
+  const [nextProbeAt, setNextProbeAt] = useState(() => Date.now() + intervalMs);
+  const [clockMs, setClockMs] = useState(Date.now);
   const profilesRef = useRef(profiles);
   const disabledRef = useRef(disabledIds);
   const probeModelsRef = useRef(probeModels);
@@ -299,44 +324,59 @@ export function StatusView({ profiles, active = true }: StatusViewProps): ReactE
     });
 
     const modelSnapshot = probeModelsRef.current;
-    const batch = await probeProfilesTogether(
+    await probeProfilesTogether(
       snapshot,
       (id) => api.probeProfile!(id, modelSnapshot[id]),
-    );
-    if (mountedRef.current) {
-      setRecords((current) => {
-        const next = { ...current };
-        for (const item of batch) {
+      (item) => {
+        if (!mountedRef.current) return;
+        setRecords((current) => {
           const previous = current[item.profile.id] ?? { samples: [], checking: false };
           if (disabledRef.current.has(item.profile.id)) {
-            next[item.profile.id] = { ...previous, checking: false };
-          } else if (item.result) {
-            next[item.profile.id] = {
-              samples: [...previous.samples, item.result].slice(-MAX_SAMPLES),
-              result: item.result,
-              checking: false,
+            return { ...current, [item.profile.id]: { ...previous, checking: false } };
+          }
+          if (item.result) {
+            return {
+              ...current,
+              [item.profile.id]: {
+                samples: [...previous.samples, item.result].slice(-MAX_SAMPLES),
+                result: item.result,
+                checking: false,
+              },
             };
-          } else {
-            next[item.profile.id] = {
+          }
+          return {
+            ...current,
+            [item.profile.id]: {
               ...previous,
               checking: false,
               error: item.error,
-            };
-          }
-        }
-        return next;
-      });
-    }
+            },
+          };
+        });
+      },
+    );
     runningRef.current = false;
     if (mountedRef.current) setRunning(false);
   }, []);
 
   useEffect(() => {
     if (!auto) return undefined;
+    setNextProbeAt(Date.now() + intervalMs);
     void probeAll();
-    const timer = window.setInterval(() => void probeAll(), intervalMs);
+    const timer = window.setInterval(() => {
+      setNextProbeAt(Date.now() + intervalMs);
+      void probeAll();
+    }, intervalMs);
     return () => window.clearInterval(timer);
   }, [auto, intervalMs, probeAll]);
+
+  useEffect(() => {
+    if (!auto) return undefined;
+    const tick = () => setClockMs(Date.now());
+    tick();
+    const timer = window.setInterval(tick, 1_000);
+    return () => window.clearInterval(timer);
+  }, [auto]);
 
   useEffect(() => {
     if (profiles.length === 0 || profilesWereAvailableRef.current) return;
@@ -349,7 +389,13 @@ export function StatusView({ profiles, active = true }: StatusViewProps): ReactE
     [disabledIds, profiles],
   );
   const summary = useMemo(() => {
-    const counts: Record<ProbeState, number> = { healthy: 0, limited: 0, unhealthy: 0, unknown: 0 };
+    const counts: Record<ProbeState, number> = {
+      healthy: 0,
+      smooth: 0,
+      limited: 0,
+      unhealthy: 0,
+      unknown: 0,
+    };
     for (const profile of enabledProfiles) {
       const record = records[profile.id];
       counts[record?.error ? "unhealthy" : probeState(record?.result)] += 1;
@@ -382,6 +428,7 @@ export function StatusView({ profiles, active = true }: StatusViewProps): ReactE
   }
 
   const unsupported = !api.probeProfile;
+  const countdown = probeCountdownSeconds(nextProbeAt, clockMs);
 
   return (
     <main className="page-scroll status-page" aria-label={m.status.title} hidden={!active}>
@@ -391,7 +438,6 @@ export function StatusView({ profiles, active = true }: StatusViewProps): ReactE
             <span className="kicker">SIGNAL DECK</span>
             <h1>{m.status.title}</h1>
           </div>
-          <span className="head-note">{m.status.subtitle}</span>
           <div className="status-controls">
             <label className="status-interval">
               <Clock3 size={13} />
@@ -428,16 +474,20 @@ export function StatusView({ profiles, active = true }: StatusViewProps): ReactE
           </div>
         </div>
 
-        <section className="status-console rise-1" aria-live="polite" title={m.status.requestNote}>
+        <section className="status-console rise-1" aria-live="polite">
           <div className="status-console-label"><Radio size={14} />{m.status.auto}</div>
           <div className="status-console-copy">
-            <strong>{enabledProfiles.length}</strong> {m.status.enabled} · <strong>{summary.healthy}</strong> {m.status.healthy} · <strong>{summary.limited}</strong> {m.status.limited} · <strong>{summary.unhealthy}</strong> {m.status.unhealthy} · <strong>{summary.unknown}</strong> {m.status.unknown} · <strong>{profiles.length - enabledProfiles.length}</strong> {m.status.disabled}
+            <strong>{enabledProfiles.length}</strong> {m.status.enabled} · <strong>{summary.healthy}</strong> {m.status.healthy} · <strong>{summary.smooth}</strong> {m.status.smooth} · <strong>{summary.limited}</strong> {m.status.limited} · <strong>{summary.unhealthy}</strong> {m.status.unhealthy} · <strong>{summary.unknown}</strong> {m.status.unknown} · <strong>{profiles.length - enabledProfiles.length}</strong> {m.status.disabled}
           </div>
           <span className={`status-console-state ${auto ? "on" : "off"}`}>
             {running
               ? <LoaderCircle size={12} className="spin" />
               : auto ? <Radio size={12} /> : <Pause size={12} />}
-            {running ? m.status.checking : auto ? m.status.auto : m.status.pause}
+            {running
+              ? m.status.checking
+              : auto
+                ? fill(m.status.countdown, { seconds: countdown })
+                : m.status.pause}
           </span>
         </section>
 
@@ -465,6 +515,7 @@ export function StatusView({ profiles, active = true }: StatusViewProps): ReactE
               <span role="columnheader">{m.status.availability}</span>
               <span role="columnheader">{m.status.history}</span>
               <span role="columnheader">{m.status.lastCheck}</span>
+              <span role="columnheader">{m.status.action}</span>
             </div>
             {profiles.map((profile) => {
               const record = records[profile.id] ?? { samples: [], checking: false };
@@ -483,6 +534,7 @@ export function StatusView({ profiles, active = true }: StatusViewProps): ReactE
               });
               const availabilityValue = probeAvailability(hourlySamples);
               const lastCheck = record.result?.checkedAt;
+              const applying = busyId === profile.id;
               const monitoringHint = fill(
                 disabled ? m.status.enableProbe : m.status.disableProbe,
                 { name: profile.name },
@@ -509,10 +561,6 @@ export function StatusView({ profiles, active = true }: StatusViewProps): ReactE
                     <span className="status-row-mark"><Radio size={12} /></span>
                     <span className="status-row-name">
                       <strong title={profile.name}>{profile.name}</strong>
-                      <small>
-                        <em>{PROTOCOL_META[profile.protocol].short}</em>
-                        <code title={endpoint?.url}>{(endpoint?.url ?? profile.baseUrl).replace(/^https?:\/\//, "")}</code>
-                      </small>
                     </span>
                   </div>
 
@@ -551,7 +599,7 @@ export function StatusView({ profiles, active = true }: StatusViewProps): ReactE
 
                   <span className={`status-row-availability ${state}`} role="cell">
                     <strong>{availabilityValue === undefined ? "———" : `${availabilityValue}%`}</strong>
-                    <small>#{hourlySamples.length}</small>
+                    <small>{fill(m.status.sampleCount, { count: hourlySamples.length })}</small>
                   </span>
 
                   <div className="status-row-history" role="cell">
@@ -567,6 +615,17 @@ export function StatusView({ profiles, active = true }: StatusViewProps): ReactE
                           ? relativeTime(lastCheck, locale, m.status.noSamples)
                           : m.status.noSamples)}
                   </span>
+
+                  <button
+                    type="button"
+                    className="icon-ghost status-row-action"
+                    title={fill(m.keys.switchTo, { name: profile.name })}
+                    aria-label={fill(m.keys.switchTo, { name: profile.name })}
+                    disabled={busy || !onApply}
+                    onClick={() => onApply?.(profile.id, [...profile.targets])}
+                  >
+                    {applying ? <LoaderCircle size={14} className="spin" /> : <Zap size={14} />}
+                  </button>
                 </div>
               );
             })}

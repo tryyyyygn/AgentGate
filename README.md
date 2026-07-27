@@ -1,278 +1,142 @@
 <div align="center">
 
-<img src="docs/images/logo.svg" width="112" alt="Agent;Gate">
-
 # Agent;Gate
 
-**简体中文** · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md)
+一个给 Windows 桌面 AI 客户端用的本地 API 密钥管理器和回环网关。
 
-**把 Claude Code、Codex、OpenCode 和 Gemini CLI 的 API 配置放在一个地方管理**
+[简体中文](README.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [English](README.en.md)
 
-客户端只连接本机。换 Key、换中转或排查请求问题，都不用再翻配置文件。
-
-[![Release](https://img.shields.io/github/v/release/trygn35-ui/agentgate?style=flat-square&color=D97757)](https://github.com/trygn35-ui/agentgate/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/trygn35-ui/agentgate/total?style=flat-square&color=3E9067&label=downloads&cacheSeconds=3600)](https://github.com/trygn35-ui/agentgate/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-2F78D0?style=flat-square)](#下载与安装)
+[![Release](https://img.shields.io/github/v/release/trygn35-ui/agentgate?style=flat-square)](https://github.com/trygn35-ui/agentgate/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2F78D0?style=flat-square)](#下载)
 [![License](https://img.shields.io/github/license/trygn35-ui/agentgate?style=flat-square)](LICENSE)
-
-[下载与安装](#下载与安装) · [能做什么](#能做什么) · [快速开始](#快速开始) · [安全与隐私](#安全与隐私) · [FAQ](#faq)
 
 <img src="docs/images/overview.png" width="820" alt="Agent;Gate 概览">
 
 </div>
 
----
+## 它解决什么
 
-## 这是什么
+如果你同时用 Codex、Claude Code、OpenCode 或 Gemini CLI，又有多个官方 API 或中转渠道，最麻烦的通常不是发请求，而是反复改配置、找 Key、确认哪条线路还能用。
 
-我经常在 Claude Code、Codex、OpenCode 和 Gemini CLI 之间切换，但它们的配置格式各不相同。每次换 Key 或换中转都要改好几处，出了问题也很难马上看出卡在哪里，所以做了 Agent;Gate。
+Agent;Gate 把这些事情收在一个本地应用里：
 
-它是一个 Windows 本地工具，会在 `127.0.0.1` 上启动网关。客户端只需接入一次，之后换上游、换 Key 都可以直接在界面里完成，不用重启客户端。
+- 保存多组 API URL、Key、模型和备用端点。
+- 一个网关同时服务多个客户端，每个客户端有自己的路由，可以使用不同密钥。
+- 客户端只连接 `127.0.0.1`，切换密钥时不必反复改客户端配置。
+- 用真实 Key 定时发送最小请求，查看可用率、耗时和最近检测记录。
+- 实时查看请求状态、TTFB/TTFC、Token 与缓存命中。
+- 浏览和删除 Claude Code、Codex、OpenCode 留在本机的会话。
 
-## 能做什么
+它不是云服务，也不是共享代理。没有账号、服务器或遥测。
 
-- 管理多套 API 方案，并分别分配给 Claude Code、Codex、OpenCode 和 Gemini CLI。
-- 用 Windows DPAPI 加密保存 Key；客户端配置里只留下本地地址和随机令牌。
-- 在网关运行时直接切换方案，不改客户端配置，也不中断已经发出的请求。
-- 查看首字时延、Token、缓存率、推理强度和错误信息，方便判断问题出在本地还是上游。
-- 对同一方案的多条 URL 做真实请求测试，并按可用率和延迟选择线路。
-- 搜索、查看和删除本机的 Claude Code、Codex、OpenCode 会话，删除前可以先确认影响范围。
-- 所有数据都留在本机：没有账号、没有遥测，也不保存请求与响应正文。
+## 客户端支持
 
-## 工作原理
+| 客户端 | 状态 | 协议 |
+| --- | --- | --- |
+| Codex | 稳定 | OpenAI Responses、Chat Completions |
+| Claude Code | 实验性 | Anthropic Messages |
+| OpenCode | 实验性 | Anthropic、OpenAI、Gemini |
+| Gemini CLI | 实验性 | Gemini |
+
+“实验性”表示这些客户端的配置格式仍可能变化。Agent;Gate 会尽量只修改自己负责的字段，并在断开接管时恢复，但升级客户端后仍建议先检查一次配置。
+
+## 渠道状态
+
+自动检测默认每 2 分钟执行，也可以选择 5 或 10 分钟。检测使用固定时钟；点击“立即检测”不会推迟下一次自动检测。
+
+| 结果 | 判定 |
+| --- | --- |
+| 正常 | 成功，耗时不超过 5 秒 |
+| 流畅 | 成功，耗时大于 5 秒且不超过 10 秒 |
+| 延迟 | 成功，耗时超过 10 秒 |
+| 故障 | 请求失败、超时或返回不可用结果 |
+
+每个渠道都能单独关闭监测、选择检测模型，并从状态页直接切换为当前密钥。
+
+## 下载
+
+前往 [Releases](https://github.com/trygn35-ui/agentgate/releases/latest)：
+
+| 文件 | 用途 |
+| --- | --- |
+| `AgentGate-Setup-<version>-x64.exe` | 安装版，支持应用内更新，推荐 |
+| `AgentGate-Portable-<version>-x64.exe` | 便携版，不写安装目录，不支持自动替换自身 |
+| `SHA256SUMS-<version>.txt` | SHA-256 校验值 |
+
+要求 Windows 10 1809+ 或 Windows 11，x64。
+
+当前构建没有商业代码签名证书，Windows SmartScreen 可能显示“未知发布者”。可以核对 Release 中的 SHA-256 后选择“更多信息 → 仍要运行”。
+
+## 快速开始
+
+1. 在“密钥”页新建方案。默认协议是 OpenAI Responses，填写上游 URL、Key 和模型。
+2. 选择这个方案要服务的客户端。
+3. 在“概览”或“状态”页把方案切换给对应客户端。
+4. 点击客户端卡片接管。之后客户端仍按原方式使用，请求会经过本地网关。
+
+断开接管时，Agent;Gate 会恢复自己修改过的配置字段。切换不同方案只更新网关路由，不会打断已经发出的请求。
 
 ```text
-Claude Code ─┐                                       ┌─ 方案 A：主力中转
-Codex ───────┤                                       ├─ 方案 B：备用中转
-OpenCode ────┼──▶  127.0.0.1:17863（Agent;Gate 网关）──┼─ 方案 C：官方直连
-Gemini CLI ──┘         注入真实 URL 与 Key           └─ …
+Claude Code ─┐
+Codex ───────┤
+OpenCode ────┼──> 127.0.0.1:17863 ──> 各客户端独立路由 ──> 不同上游
+Gemini CLI ──┘
 ```
 
-1. 客户端里**只写一次** `http://127.0.0.1:17863/...`，之后再也不用改。
-2. 网关收到请求后剥离本地令牌，按当前方案注入真实的上游地址与 Key，再原样转发。
-3. 在界面上换方案 = 换网关的内存路由。**客户端毫无察觉，不需要重启。**
-4. 关闭网关时，Agent;Gate 只把接管前的那几个字段还原回去，你在此期间新增的 MCP、插件、注释都会保留。
+## 数据与安全
+
+- Key 使用 Windows DPAPI 加密，保存于当前 Windows 用户的数据目录。
+- 上游 URL 和真实 Key 不写入客户端配置；客户端只保存本地地址和随机本地凭据。
+- 网关只监听回环地址，不向局域网开放。
+- 动态记录只保存请求元数据，不保存提示词、回复正文或会话内容。
+- 会话页直接读取各客户端自己的本地数据库；删除前会展示计划，删除不可恢复。
+
+数据目录：
+
+```text
+%APPDATA%\agentgate\data\
+├── profiles.json
+├── gateway.json
+├── gateway-recovery.json
+├── settings.json
+├── requests.json
+└── window-state.json
+```
 
 ## 截图
 
 <details open>
-<summary><b>密钥管理</b> — 拖动排序、累计用量、健康时间线、一键切换与实测</summary>
+<summary>密钥管理</summary>
 <br>
-<img src="docs/images/keyring.png" width="820" alt="密钥页">
+<img src="docs/images/keyring.png" width="820" alt="密钥管理">
 </details>
 
 <details>
-<summary><b>请求监控</b> — 首字时延、Token、缓存率实时刷新</summary>
+<summary>请求动态</summary>
 <br>
-<img src="docs/images/activity.png" width="820" alt="动态页">
+<img src="docs/images/activity.png" width="820" alt="请求动态">
 </details>
 
 <details>
-<summary><b>设置</b> — 静默自启、托盘驻留、语言、主题与自动更新</summary>
+<summary>设置</summary>
 <br>
-<img src="docs/images/settings.png" width="820" alt="设置页">
-</details>
-
-<details>
-<summary><b>深色主题</b></summary>
-<br>
-<img src="docs/images/overview-dark.png" width="820" alt="深色主题">
-</details>
-
-## 下载与安装
-
-前往 **[Releases](https://github.com/trygn35-ui/agentgate/releases/latest)** 下载：
-
-| 文件 | 说明 |
-| --- | --- |
-| `AgentGate-Setup-<版本>-x64.exe` | 安装版，**支持自动更新**，推荐 |
-| `AgentGate-Portable-<版本>-x64.exe` | 便携版，免安装，不支持自动更新 |
-| `SHA256SUMS-<版本>.txt` | 校验和，可核对安装包完整性 |
-
-**系统要求**：Windows 10 (1809+) 或 Windows 11，x64。无需额外运行时。
-
-> [!NOTE]
-> 当前构建没有商业代码签名证书，首次运行时 Windows SmartScreen 会提示“未知发布者”。
-> 点击 **更多信息 → 仍要运行** 即可。介意的话可以先用 `SHA256SUMS` 核对安装包，或直接从源码构建。
-
-## 快速开始
-
-1. **新建方案** — 在「密钥」页点新建，填入方案名、API 协议、上游 URL 和 Key。Key 输入后立即加密保存。
-2. **勾选适用客户端** — 一个方案可以同时供多个协议兼容的客户端使用。
-3. **分配给客户端** — 在「概览」页每张客户端卡片下方点「选择 Key」，挑一个方案。
-4. **点卡片接管** — 点客户端卡片本体，网关启动并只接管这一个客户端；其余客户端一个字节都不动。再点一下即断开还原。
-5. **照常使用客户端** — 请求经网关转发，在「动态」页实时查看时延与用量。
-
-之后再换方案只需重复第 3 步——**不用碰任何配置文件，不用重启客户端。**
-
-## 客户端支持
-
-| 客户端 | 接入位置 | Agent;Gate 管理的字段 |
-| --- | --- | --- |
-| Claude Code | `~/.claude/settings.json` | 本地 Base URL、本地认证、可选模型与 Tool Search |
-| Codex | `~/.codex/config.toml` | 已有 provider 时仅改其 `base_url`；配置为空时整段新建网关 provider，断开时整段拆掉 |
-| OpenCode | `~/.config/opencode/opencode.json(c)` | `provider.agentgate_gateway`、模型选择与本地认证 |
-| Gemini CLI | `~/.gemini/.env`、`~/.gemini/settings.json` | 本地 Base URL、本地认证、可选模型与认证类型 |
-
-支持 `CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`GEMINI_CLI_HOME`、`OPENCODE_CONFIG`、`XDG_CONFIG_HOME` 与 `XDG_DATA_HOME` 路径覆盖。
-
-<details>
-<summary>Agent;Gate 如何保护你已有的配置</summary>
-<br>
-
-- JSON/JSONC 使用结构化定点编辑，保留注释、未知字段、插件、Hooks 和权限设置。
-- Codex 已有活跃 provider 时只改它的 `base_url`，不碰 `model`、`wire_api`、认证字段和 `auth.json`；从没配置过 provider 的全新用户则整段新建、断开时整段拆掉，原有 `mcp_servers` 等内容原样保留。
-- 首次接管时捕获字段级基线，并保存一份 DPAPI 加密的完整原文件作为紧急恢复依据。
-- 关闭网关时只恢复这些受管字段，**不做整文件回滚**，运行期间新增的 MCP、project、注释继续保留。
-- 如果你手动把 provider 切走了，Agent;Gate 视为已解除接管并跳过恢复。
-- 多文件写入先预检再原子替换，失败时回滚已写文件。
-
-</details>
-
-## 安全与隐私
-
-这是一个处理 API Key 的工具，所以下面每一条都写成**可验证的事实**，而不是承诺：
-
-- **没有服务端、没有账号、没有遥测。** 网络请求只发往你配置的上游；当你在设置页主动检查或下载更新时，还会访问 GitHub Releases。可以用抓包工具自行确认。
-- **Key 用 Windows DPAPI 加密**（Electron `safeStorage`，绑定当前 Windows 用户），密文存在 `%APPDATA%\agentgate\data\profiles.json`。换个用户或换台机器都解不开。
-- **真实 Key 永不写入客户端配置文件。** 客户端里只有 `127.0.0.1` 地址和一个随机本地令牌。列表与状态 IPC 不返回明文 Key；复制操作由主进程直接写入系统剪贴板。
-- **不保存请求正文。** 请求监控只记录时延、Token 计数、模型名等元数据，任何时候都不落盘请求或响应内容。
-- **网关只绑定回环地址**，不监听局域网，且只为四个客户端提供固定路径槽，不是通用代理。
-- **可校验的安装包** — 每个 Release 附带 `SHA256SUMS`，源码完全开放，可自行构建比对。
-
-> [!IMPORTANT]
-> 你需要自行以合法方式获取上游或中转服务的 API Key，并遵守其服务条款与所在地法律法规。
-> Agent;Gate 只是本地工具，不提供任何 API 服务，也不对你使用的上游服务负责。
-
-## 数据目录
-
-```text
-%APPDATA%\agentgate\data\
-├── profiles.json           方案与 DPAPI 加密的 Key 密文
-├── gateway.json            监听设置、持久化路由与加密本地令牌
-├── gateway-recovery.json   接管前的受管字段基线（DPAPI 加密）
-├── settings.json           自启、托盘、主题与实验功能
-├── requests.json           最近 100 条请求元数据（不含正文）
-└── window-state.json       窗口位置与大小
-```
-
-卸载后如需彻底清理，删除上面整个目录即可。
-
-## 自动更新
-
-安装版通过 GitHub Releases 自动更新：在设置页检查更新、后台下载，重启即可安装。
-**安装前会先停止网关并恢复客户端配置**，因此更新不会把客户端留在失效的本地地址上。
-便携版无法就地替换自身，只提示新版本并引导到下载页。
-
-## FAQ
-
-<details>
-<summary><b>Windows 提示“未知发布者”或被杀软拦截？</b></summary>
-<br>
-
-没有购买代码签名证书（一年数千元），所有未签名的 Electron 应用都会这样。
-点击 **更多信息 → 仍要运行**。介意的话请核对 `SHA256SUMS`，或从源码自行构建。
-
-</details>
-
-<details>
-<summary><b>端口 17863 被占用了怎么办？</b></summary>
-<br>
-
-不用管。首次接管时撞上端口占用会**自动换一个空闲端口**并把新端口写进客户端配置；
-未接管任何客户端时，点右上角的端口号也可以手动随机换一个。
-已有客户端在接管中时端口被锁定——它们的配置里写着当前端口，不会被悄悄改掉。
-
-</details>
-
-<details>
-<summary><b>切换方案需要重启客户端吗？</b></summary>
-<br>
-
-不需要。网关运行时切换只改内存路由，客户端配置字节不变。
-已经发出的请求继续使用开始时的上游，新请求走新方案。
-
-</details>
-
-<details>
-<summary><b>Key 存在哪里？换电脑怎么迁移？</b></summary>
-<br>
-
-存在 `%APPDATA%\agentgate\data\profiles.json`，用 DPAPI 加密并**绑定当前 Windows 用户**。
-正因如此，直接把这个文件拷到另一台机器是**解不开的**——换机后需要重新录入 Key。
-
-</details>
-
-<details>
-<summary><b>请求记录会保存我的对话内容吗？</b></summary>
-<br>
-
-不会。只记录时延、Token 数量、模型名等元数据，请求与响应正文任何时候都不落盘。
-
-</details>
-
-<details>
-<summary><b>关闭网关后，客户端配置会变回去吗？</b></summary>
-<br>
-
-会。Agent;Gate 只把首次接管时改动的那几个字段还原回去，其他内容（包括你在此期间新增的 MCP、插件、注释）原样保留。
-如果检测到受管字段被外部修改，会拒绝停止网关，以免覆盖你的改动。
-
-</details>
-
-<details>
-<summary><b>和 one-api / new-api / claude-code-router 有什么不同？</b></summary>
-<br>
-
-那些是**服务端**中转分发平台：要部署、有数据库、面向多用户。
-Agent;Gate 是**桌面单机工具**：不部署、不联网、只服务你自己的几个 CLI 客户端，
-核心价值在于「换方案不用改客户端配置」和「Key 加密不落地」。
-
+<img src="docs/images/settings.png" width="820" alt="设置">
 </details>
 
 ## 开发
 
-需要 Node.js 22 与 pnpm。
+需要 Node.js 22 和 pnpm。
 
 ```powershell
 pnpm install --frozen-lockfile
-pnpm test        # 单元测试（使用临时目录，不读写真实配置）
-pnpm dev         # 开发模式
-pnpm dist        # 打包 Windows 安装版与便携版
-pnpm release     # 整理交付件与校验和
+pnpm test
+pnpm dev
+pnpm dist
+pnpm release
 ```
 
-技术栈：Electron + React + TypeScript。主进程负责全部文件写入与密钥处理，渲染进程没有文件系统权限。
+Electron 主进程负责文件写入、DPAPI 和网关；React 渲染进程没有直接文件系统权限。
 
-<details>
-<summary><code>pnpm dist</code> 报 <code>Cannot create symbolic link</code></summary>
-
-electron-builder 会下载并解压 `winCodeSign` 工具包（图标与版本信息要靠里面的 `rcedit` 写进 exe）。
-这个压缩包里含 macOS 的 dylib **符号链接**，而 Windows 上非管理员账户默认没有创建符号链接的权限，
-解压失败会直接中止构建。
-
-两种解法，任选其一：
-
-- 打开 Windows 的**开发者模式**（设置 → 系统 → 开发者选项），普通账户即可创建符号链接；
-- 或者手动把工具包解压到缓存目录，跳过 darwin 部分：
-
-  ```powershell
-  $cache = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign"
-  # 从 electron-builder-binaries 下载 winCodeSign-2.6.0.7z 后：
-  7za x winCodeSign-2.6.0.7z "-o$cache\winCodeSign-2.6.0" '-x!darwin*' -y
-  ```
-
-不要用 `signAndEditExecutable: false` 绕过——那个开关会连 `rcedit` 一起关掉，
-打出来的 exe 会保留 Electron 自带的图标、`ProductName: Electron` 和版本号 33.x。
-
-</details>
-
-## 致谢
-
-- [Electron](https://www.electronjs.org/) · [electron-builder](https://www.electron.build/) · [electron-updater](https://www.electron.build/auto-update)
-- [Lucide](https://lucide.dev/) 图标
-- 灵感来自社区中各类 LLM 网关与中转管理工具
-
-## License
+## 许可
 
 [MIT](LICENSE)

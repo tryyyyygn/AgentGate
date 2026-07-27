@@ -279,34 +279,36 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
           onGoActivity={goActivity}
         />
       )}
-      {view === "keyring" && (
-        <KeyringView
-          profiles={controller.data.profiles}
-          gateway={gateway}
-          busy={controller.busy}
-          busyId={controller.busyId}
-          loading={controller.busy === "load"}
-          error={controller.bootstrapError}
-          onCreate={() => setEditor({ open: true })}
-          onEdit={(profile) => setEditor({ open: true, profile })}
-          onDuplicate={(profile) => void controller.duplicateProfile(profile)}
-          onDelete={setPendingDelete}
-          onApply={(id, targets) => void controller.applyProfile(id, targets)}
-          onTest={(id) => void controller.checkProfileHealth(id)}
-          onTestAll={() => void controller.checkAllProfilesHealth()}
-          testingIds={controller.testingIds}
-          onDiscoverModels={(id) => void controller.testProfile(id)}
-          onProbe={(id) => void controller.probeProfile(id)}
-          onCopyKey={(profile) => void controller.copyKey(profile)}
-          onReorder={(ids) => void controller.reorderProfiles(ids)}
-          onRetry={() => void controller.refresh()}
-        />
-      )}
+      <KeyringView
+        profiles={controller.data.profiles}
+        gateway={gateway}
+        busy={controller.busy}
+        busyId={controller.busyId}
+        loading={controller.busy === "load"}
+        error={controller.bootstrapError}
+        onCreate={() => setEditor({ open: true })}
+        onEdit={(profile) => setEditor({ open: true, profile })}
+        onDuplicate={(profile) => controller.duplicateProfile(profile)}
+        onDelete={setPendingDelete}
+        onApply={(id, targets) => void controller.applyProfile(id, targets)}
+        onTest={(id) => void controller.checkProfileHealth(id)}
+        onTestAll={() => void controller.checkAllProfilesHealth()}
+        testingIds={controller.testingIds}
+        onDiscoverModels={(id) => void controller.testProfile(id)}
+        onProbe={(id) => void controller.probeProfile(id)}
+        onCopyKey={(profile) => void controller.copyKey(profile)}
+        onReorder={(ids) => void controller.reorderProfiles(ids)}
+        onRetry={() => void controller.refresh()}
+        active={view === "keyring"}
+      />
       <StatusView
         profiles={controller.data.profiles}
+        busy={Boolean(controller.busy)}
+        busyId={controller.busyId}
+        onApply={(id, targets) => void controller.applyProfile(id, targets)}
         active={view === "status"}
       />
-      {view === "activity" && <ActivityView requests={requestRecords} />}
+      <ActivityView requests={requestRecords} active={view === "activity"} />
       <SessionsView
         active={view === "sessions"}
         onToast={(kind, message) => controller.setToast({ kind, message })}

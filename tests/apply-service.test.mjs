@@ -1524,6 +1524,21 @@ describe("首次使用 Codex（配置里没有 provider）", () => {
     }
   });
 
+  it("生命周期事务内可以恢复目标而不重入自身锁", async () => {
+    const { profileService, gatewayService, applyService } = freshHarness();
+    const profile = await freshProfile(profileService);
+    await applyService.assignProfile(profile.id, ["codex"]);
+
+    try {
+      await applyService.startGateway({ port: 0, targets: ["codex"] });
+      await expect(applyService.withLifecycleLock(({ stopGateway }) => (
+        stopGateway({ targets: ["codex"] })
+      ))).resolves.toMatchObject({ engaged: [] });
+    } finally {
+      await gatewayService.stop().catch(() => {});
+    }
+  });
+
   it("有 model 和 mcp、没有 provider：接管留住 mcp，断开按原样放回 model", async () => {
     const { profileService, gatewayService, applyService, codexPath } = freshHarness();
     await fs.mkdir(path.dirname(codexPath), { recursive: true });

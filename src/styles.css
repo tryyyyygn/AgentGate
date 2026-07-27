@@ -852,6 +852,13 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   color: var(--ink-soft);
 }
 .socket-title svg { display: none; }
+.socket-title small {
+  flex: 0 0 auto;
+  color: var(--ink-quiet);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+}
 
 .socket-profile { display: block; margin-top: 12px; min-width: 0; }
 .socket-profile-line { display: flex; align-items: center; gap: 6px; }
@@ -1420,7 +1427,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .status-table-head,
 .status-row {
   display: grid;
-  grid-template-columns: 42px minmax(176px, 1.3fr) minmax(116px, .85fr) 78px 88px 78px minmax(142px, 1fr) 88px;
+  grid-template-columns: 42px minmax(152px, 1.15fr) minmax(112px, .8fr) 74px 84px 76px minmax(132px, 1fr) 84px 36px;
   align-items: center;
   gap: 8px;
   min-width: 900px;
@@ -1446,6 +1453,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .status-row:last-child { border-bottom: 0; }
 .status-row:hover { background: var(--soft); }
 .status-row.healthy { --status-tone: var(--good); }
+.status-row.smooth { --status-tone: var(--cool); }
 .status-row.limited { --status-tone: var(--warn); }
 .status-row.unhealthy { --status-tone: var(--bad); }
 .status-row.checking { --status-tone: var(--opencode); }
@@ -1475,7 +1483,6 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 }
 .status-row-name { min-width: 0; }
 .status-row-name strong,
-.status-row-name code,
 .status-row-model,
 .status-row-last {
   overflow: hidden;
@@ -1488,22 +1495,6 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   font-size: var(--fs-sm);
   font-weight: 600;
 }
-.status-row-name small {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  margin-top: 2px;
-  color: var(--ink-quiet);
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-}
-.status-row-name em {
-  flex: 0 0 auto;
-  color: var(--status-tone);
-  font-style: normal;
-}
-.status-row-name code { min-width: 0; }
 .status-row-model-cell { min-width: 0; }
 .status-row-model {
   display: block;
@@ -1562,6 +1553,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   white-space: nowrap;
 }
 .status-row-availability.healthy strong { color: var(--good); }
+.status-row-availability.smooth strong { color: var(--cool); }
 .status-row-availability.limited strong { color: var(--warn); }
 .status-row-availability.unhealthy strong { color: var(--bad); }
 .status-row-history { min-width: 0; }
@@ -1582,6 +1574,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   animation: bar-in 360ms cubic-bezier(.2, .9, .25, 1) backwards;
 }
 .status-pulse-bar.healthy { background: var(--good); }
+.status-pulse-bar.smooth { background: var(--cool); }
 .status-pulse-bar.limited { background: var(--warn); }
 .status-pulse-bar.unhealthy { background: var(--bad); }
 .status-pulse-bar.empty { height: 3px; opacity: .55; animation: none; }
@@ -1592,6 +1585,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   font-family: var(--mono);
   font-size: var(--fs-label);
 }
+.status-row-action { justify-self: end; }
 
 /* ---------- 动态 ---------- */
 .req-filters { display: inline-flex; gap: 12px; margin-left: auto; }
@@ -1766,7 +1760,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   grid-template-columns: minmax(0, 1fr) 36px;
   align-items: center;
   gap: 12px;
-  min-height: 58px;
+  min-height: 50px;
   padding: 9px 14px;
   border-bottom: 1px solid var(--line);
   cursor: pointer;
@@ -1780,13 +1774,6 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   font-size: var(--fs-base);
   font-weight: 600;
   color: var(--ink);
-}
-.settings-row-copy small {
-  display: block;
-  margin-top: 3px;
-  font-size: var(--fs-sm);
-  line-height: 19px;
-  color: var(--ink-quiet);
 }
 .settings-row input[type="checkbox"], .switch-input {
   position: absolute;
@@ -1821,7 +1808,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  min-height: 58px;
+  min-height: 50px;
   padding: 9px 14px;
 }
 .theme-segments {

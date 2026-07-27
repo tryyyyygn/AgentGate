@@ -19,7 +19,6 @@ export interface Messages {
   nav: { overview: string; keys: string; status: string; stream: string; config: string };
   status: {
     title: string;
-    subtitle: string;
     auto: string;
     pause: string;
     resume: string;
@@ -40,6 +39,7 @@ export interface Messages {
     enableProbe: string;
     disableProbe: string;
     healthy: string;
+    smooth: string;
     limited: string;
     unhealthy: string;
     unknown: string;
@@ -48,8 +48,10 @@ export interface Messages {
     firstByte: string;
     lastCheck: string;
     checking: string;
+    countdown: string;
+    sampleCount: string;
+    action: string;
     noSamples: string;
-    requestNote: string;
     unsupported: string;
   };
   gateway: {
@@ -82,7 +84,7 @@ export interface Messages {
     todayResets: string;
     clients: string;
     worldLines: string;
-    clickToJump: string;
+    experimental: string;
     unbound: string;
     noProfileBound: string;
     clientNotDetected: string;
@@ -171,7 +173,6 @@ export interface Messages {
   };
   sessions: {
     title: string;
-    subtitle: string;
     /** 展开看发言。 */
     loading: string;
     noMessages: string;
@@ -219,14 +220,8 @@ export interface Messages {
   config: {
     title: string;
     launchAtLogin: string;
-    launchAtLoginDesc: string;
     closeToTray: string;
-    closeToTrayDesc: string;
     startGateway: string;
-    startGatewayDesc: string;
-    toolBridge: string;
-    toolBridgeDesc: string;
-    update: string;
     updateCurrent: string;
     updateAvailable: string;
     updateDownloading: string;
@@ -238,10 +233,8 @@ export interface Messages {
     goDownload: string;
     installRestart: string;
     attractorField: string;
-    attractorFieldDesc: string;
     system: string;
     language: string;
-    languageDesc: string;
     security: string;
   };
   editor: {
@@ -339,7 +332,6 @@ const zh: Messages = {
   nav: { overview: "概览", keys: "密钥", status: "状态", stream: "动态", config: "设置" },
   status: {
     title: "渠道状态",
-    subtitle: "使用真实 Key 周期性发送最小请求",
     auto: "自动检测",
     pause: "暂停",
     resume: "继续",
@@ -360,16 +352,19 @@ const zh: Messages = {
     enableProbe: "启用「{name}」监测",
     disableProbe: "关闭「{name}」监测",
     healthy: "正常",
+    smooth: "流畅",
     limited: "延迟",
     unhealthy: "故障",
     unknown: "未检测",
-    availability: "近一小时可用率",
+    availability: "可用率",
     response: "总耗时",
     firstByte: "首包",
     lastCheck: "最近检测",
     checking: "检测中",
+    countdown: "{seconds} 秒",
+    sampleCount: "{count} 次",
+    action: "切换",
     noSamples: "等待首轮实测",
-    requestNote: "每次使用当前方案的活动 URL 与模型发送最小消息",
     unsupported: "当前版本不支持 Key 实测",
   },
   gateway: {
@@ -402,7 +397,7 @@ const zh: Messages = {
     todayResets: "今日 · 0 点重置",
     clients: "客户端",
     worldLines: "世界线",
-    clickToJump: "点击跳线 · 立即生效",
+    experimental: "（实验性）",
     unbound: "未接入",
     noProfileBound: "尚未分配方案",
     clientNotDetected: "未检测到客户端",
@@ -490,7 +485,6 @@ const zh: Messages = {
   },
   sessions: {
     title: "会话",
-    subtitle: "本机 agent 的会话 · 直接读它们自己的库",
     loading: "正在读取",
     noMessages: "这个会话没有可显示的发言",
     pickOne: "从左边选一个会话",
@@ -535,14 +529,8 @@ const zh: Messages = {
   config: {
     title: "设置",
     launchAtLogin: "开机自启（静默）",
-    launchAtLoginDesc: "登录 Windows 后自动启动并直接驻留托盘，不弹出窗口；手动启动仍正常显示",
     closeToTray: "关闭时驻留托盘",
-    closeToTrayDesc: "网关运行时保持后台驻留，关闭网关后按此设置退出",
     startGateway: "启动时恢复网关",
-    startGatewayDesc: "启动后恢复上次的网关开关状态",
-    toolBridge: "Codex 工具兼容模式（实验性）",
-    toolBridgeDesc: "只转换 Responses 的 exec 工具协议，不能修复上游裁剪上下文",
-    update: "软件更新",
     updateCurrent: "当前版本 {version}",
     updateAvailable: "发现新版本 {version}",
     updateDownloading: "正在下载 {percent}%",
@@ -554,10 +542,8 @@ const zh: Messages = {
     goDownload: "前往下载",
     installRestart: "重启并安装",
     attractorField: "世界线",
-    attractorFieldDesc: "α 纸与墨 · β 分歧率显示器 · 立即生效",
     system: "跟随系统",
     language: "语言",
-    languageDesc: "界面语言 · 立即生效",
     security: "真实 Key 由 Windows DPAPI 加密，只在本机交给网关；客户端不会保存上游 Key。方案中的 URL 与 Key 永不写入客户端配置文件。",
   },
   editor: {
@@ -660,7 +646,6 @@ const zhTW: Messages = {
   nav: { overview: "總覽", keys: "API Key", status: "狀態", stream: "動態", config: "設定" },
   status: {
     title: "Channel Status",
-    subtitle: "使用真實 Key 定期送出最小請求",
     auto: "自動檢測",
     pause: "暫停",
     resume: "繼續",
@@ -681,16 +666,19 @@ const zhTW: Messages = {
     enableProbe: "啟用「{name}」監測",
     disableProbe: "關閉「{name}」監測",
     healthy: "正常",
+    smooth: "流暢",
     limited: "延遲",
     unhealthy: "故障",
     unknown: "未檢測",
-    availability: "近一小時可用率",
+    availability: "可用率",
     response: "總耗時",
     firstByte: "首包",
     lastCheck: "最近檢測",
     checking: "檢測中",
+    countdown: "{seconds} 秒",
+    sampleCount: "{count} 次",
+    action: "切換",
     noSamples: "等待第一輪實測",
-    requestNote: "每次使用目前 Profile 的 active URL 與 Model 送出最小訊息",
     unsupported: "目前版本不支援 Key 實測",
   },
   gateway: {
@@ -723,7 +711,7 @@ const zhTW: Messages = {
     todayResets: "今日 · 0 點歸零",
     clients: "CLIENT",
     worldLines: "世界線",
-    clickToJump: "點卡片接管 · 立即生效",
+    experimental: "（實驗性）",
     unbound: "未接入",
     noProfileBound: "尚未指定 Profile",
     clientNotDetected: "找不到這個 Client",
@@ -811,7 +799,6 @@ const zhTW: Messages = {
   },
   sessions: {
     title: "Session",
-    subtitle: "本機 agent 的 session · 直接讀它們自己的資料庫",
     loading: "讀取中",
     noMessages: "這個 session 沒有可顯示的發言",
     pickOne: "從左邊選一個 session",
@@ -856,14 +843,8 @@ const zhTW: Messages = {
   config: {
     title: "設定",
     launchAtLogin: "開機自動啟動（靜默）",
-    launchAtLoginDesc: "登入 Windows 後自動啟動並常駐系統匣，不跳視窗；手動啟動時照常顯示",
     closeToTray: "關閉時常駐系統匣",
-    closeToTrayDesc: "Gateway 運行時一律常駐；Gateway 關閉後才依這個設定結束",
     startGateway: "啟動時還原 Gateway",
-    startGatewayDesc: "開啟程式後還原上次的 Gateway 狀態",
-    toolBridge: "Codex 工具相容模式（實驗性）",
-    toolBridgeDesc: "只轉換 Responses 的 exec 工具協定，救不了上游裁掉的 context",
-    update: "軟體更新",
     updateCurrent: "目前版本 {version}",
     updateAvailable: "有新版本 {version}",
     updateDownloading: "下載中 {percent}%",
@@ -875,10 +856,8 @@ const zhTW: Messages = {
     goDownload: "前往下載",
     installRestart: "重開並安裝",
     attractorField: "世界線",
-    attractorFieldDesc: "α 紙與墨 · β 分歧率顯示器 · 立即生效",
     system: "跟隨系統",
     language: "語言",
-    languageDesc: "介面語言 · 立即生效",
     security: "真正的 Key 由 Windows DPAPI 加密，只在本機交給 Gateway；Client 不會存到上游的 Key。Profile 裡的 URL 和 Key 永遠不會寫進 Client 的設定檔。",
   },
   editor: {
@@ -981,7 +960,6 @@ const ja: Messages = {
   nav: { overview: "概要", keys: "API キー", status: "状態", stream: "ストリーム", config: "設定" },
   status: {
     title: "チャネル状態",
-    subtitle: "実際の Key で最小リクエストを定期送信",
     auto: "自動チェック",
     pause: "一時停止",
     resume: "再開",
@@ -1002,16 +980,19 @@ const ja: Messages = {
     enableProbe: "「{name}」の監視を有効化",
     disableProbe: "「{name}」の監視を停止",
     healthy: "正常",
+    smooth: "快適",
     limited: "遅延",
     unhealthy: "障害",
     unknown: "未計測",
-    availability: "直近 1 時間の可用率",
+    availability: "可用率",
     response: "合計",
     firstByte: "初バイト",
     lastCheck: "最終チェック",
     checking: "チェック中",
+    countdown: "{seconds} 秒",
+    sampleCount: "{count} 回",
+    action: "切替",
     noSamples: "初回チェック待ち",
-    requestNote: "現在の Profile の active URL と Model に最小メッセージを送信",
     unsupported: "このバージョンでは Key 実測に未対応",
   },
   gateway: {
@@ -1044,7 +1025,7 @@ const ja: Messages = {
     todayResets: "本日 · 0 時にリセット",
     clients: "CLIENT",
     worldLines: "世界線",
-    clickToJump: "カードをクリックで引き受け · 即時反映",
+    experimental: "（実験的）",
     unbound: "未接続",
     noProfileBound: "プロファイル未設定",
     clientNotDetected: "クライアントが見つかりません",
@@ -1132,7 +1113,6 @@ const ja: Messages = {
   },
   sessions: {
     title: "セッション",
-    subtitle: "ローカル agent のセッション · 各自の DB を直読み",
     loading: "読み込み中",
     noMessages: "表示できる発言なし",
     pickOne: "左からセッションを選択",
@@ -1177,14 +1157,8 @@ const ja: Messages = {
   config: {
     title: "設定",
     launchAtLogin: "自動起動（サイレント）",
-    launchAtLoginDesc: "Windows ログイン時に自動起動し、ウィンドウを出さずトレイに常駐。手動起動なら通常どおり表示",
     closeToTray: "閉じてもトレイに常駐",
-    closeToTrayDesc: "ゲートウェイ稼働中は常に常駐。停止後はこの設定に従って終了",
     startGateway: "起動時にゲートウェイを復元",
-    startGatewayDesc: "前回のゲートウェイの状態を起動時に復元",
-    toolBridge: "Codex ツール互換モード（実験的）",
-    toolBridgeDesc: "Responses の exec ツールプロトコルを変換するだけ。上流が切り詰めたコンテキストは戻せません",
-    update: "ソフトウェア更新",
     updateCurrent: "現在のバージョン {version}",
     updateAvailable: "新しいバージョン {version} があります",
     updateDownloading: "ダウンロード中 {percent}%",
@@ -1196,10 +1170,8 @@ const ja: Messages = {
     goDownload: "配布ページへ",
     installRestart: "再起動してインストール",
     attractorField: "世界線",
-    attractorFieldDesc: "α 紙とインク · β ダイバージェンスメーター · 即時反映",
     system: "システムに従う",
     language: "言語",
-    languageDesc: "表示言語 · 即時反映",
     security: "本物のキーは Windows DPAPI で暗号化し、ローカルのゲートウェイにのみ渡します。クライアントが上流のキーを保存することはありません。プロファイルの URL とキーがクライアントの設定ファイルに書き込まれることもありません。",
   },
   editor: {
@@ -1302,7 +1274,6 @@ const en: Messages = {
   nav: { overview: "OVERVIEW", keys: "KEYS", status: "STATUS", stream: "STREAM", config: "CONFIG" },
   status: {
     title: "CHANNEL STATUS",
-    subtitle: "SEND A MINIMAL REQUEST WITH EACH REAL KEY",
     auto: "AUTO PROBE",
     pause: "PAUSE",
     resume: "RESUME",
@@ -1323,16 +1294,19 @@ const en: Messages = {
     enableProbe: "Enable monitoring for {name}",
     disableProbe: "Disable monitoring for {name}",
     healthy: "HEALTHY",
+    smooth: "SMOOTH",
     limited: "HIGH LATENCY",
     unhealthy: "DOWN",
     unknown: "UNTESTED",
-    availability: "1H AVAILABILITY",
+    availability: "AVAILABILITY",
     response: "TOTAL",
     firstByte: "TTFB",
     lastCheck: "LAST PROBE",
     checking: "PROBING",
+    countdown: "{seconds}s",
+    sampleCount: "{count} samples",
+    action: "SWITCH",
     noSamples: "AWAITING FIRST PROBE",
-    requestNote: "Each probe uses the profile's active URL and model with a minimal message",
     unsupported: "Key probing is not available in this build",
   },
   gateway: {
@@ -1365,7 +1339,7 @@ const en: Messages = {
     todayResets: "TODAY · RESETS AT 00:00",
     clients: "CLIENTS",
     worldLines: "World Lines",
-    clickToJump: "CLICK TO JUMP · INSTANT",
+    experimental: "(EXPERIMENTAL)",
     unbound: "UNBOUND",
     noProfileBound: "NO PROFILE BOUND",
     clientNotDetected: "CLIENT NOT DETECTED",
@@ -1453,7 +1427,6 @@ const en: Messages = {
   },
   sessions: {
     title: "Sessions",
-    subtitle: "Local agent sessions · read straight from their own stores",
     loading: "Loading",
     noMessages: "No messages to show",
     pickOne: "Pick a session on the left",
@@ -1498,14 +1471,8 @@ const en: Messages = {
   config: {
     title: "Config",
     launchAtLogin: "Launch at login (silent)",
-    launchAtLoginDesc: "Starts to tray on Windows login without a window; manual launch shows normally",
     closeToTray: "Close to tray",
-    closeToTrayDesc: "Always resident while the gateway runs; otherwise follows this setting",
     startGateway: "Restore gateway on launch",
-    startGatewayDesc: "Restores the last gateway state at startup",
-    toolBridge: "Codex tool bridge (experimental)",
-    toolBridgeDesc: "Only converts the Responses exec tool protocol; cannot fix upstream context truncation",
-    update: "Software update",
     updateCurrent: "Current version {version}",
     updateAvailable: "Version {version} available",
     updateDownloading: "Downloading {percent}%",
@@ -1517,10 +1484,8 @@ const en: Messages = {
     goDownload: "OPEN PAGE",
     installRestart: "RESTART & INSTALL",
     attractorField: "Attractor Field",
-    attractorFieldDesc: "α paper & ink · β divergence meter · applies instantly",
     system: "SYSTEM",
     language: "Language",
-    languageDesc: "Interface language · applies instantly",
     security: "Real keys are encrypted with Windows DPAPI and handed only to the local gateway. Clients never store upstream keys, and profile URLs and keys are never written to client config files.",
   },
   editor: {

@@ -13,7 +13,6 @@ const SettingsSchema = z.object({
   theme: z.enum(THEME_VALUES),
   // 老版本写下的 settings.json 没有这个字段，缺省值让它继续可读。
   language: z.enum(LANGUAGE_VALUES).default('system'),
-  experimentalToolBridge: z.boolean(),
 })
 
 const SettingsPatchSchema = SettingsSchema.omit({ version: true }).partial().strict()
@@ -26,7 +25,6 @@ function defaultSettings() {
     startGatewayOnLaunch: true,
     theme: 'system',
     language: 'system',
-    experimentalToolBridge: false,
   }
 }
 

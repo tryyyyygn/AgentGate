@@ -1,248 +1,126 @@
 <div align="center">
 
-<img src="docs/images/logo.svg" width="112" alt="Agent;Gate">
-
 # Agent;Gate
 
-[简体中文](README.md) · [繁體中文](README.zh-TW.md) · [English](README.en.md) · **日本語**
+Windows のデスクトップ AI クライアント向け、ローカル API キー管理ツール兼ループバックゲートウェイ。
 
-**完全ローカルの API プロファイル管理 & ループバックゲートウェイ**
+[简体中文](README.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [English](README.en.md)
 
-プロバイダの切り替えにクライアント設定は不要 · キーは暗号化保存、平文は残さない · リクエストをリアルタイムに可視化
-
-[![Release](https://img.shields.io/github/v/release/trygn35-ui/agentgate?style=flat-square&color=D97757)](https://github.com/trygn35-ui/agentgate/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/trygn35-ui/agentgate/total?style=flat-square&color=3E9067&label=downloads&cacheSeconds=3600)](https://github.com/trygn35-ui/agentgate/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-2F78D0?style=flat-square)](#ダウンロードとインストール)
+[![Release](https://img.shields.io/github/v/release/trygn35-ui/agentgate?style=flat-square)](https://github.com/trygn35-ui/agentgate/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2F78D0?style=flat-square)](#ダウンロード)
 [![License](https://img.shields.io/github/license/trygn35-ui/agentgate?style=flat-square)](LICENSE)
-
-[ダウンロードとインストール](#ダウンロードとインストール) · [クイックスタート](#クイックスタート) · [仕組み](#仕組み) · [セキュリティとプライバシー](#セキュリティとプライバシー) · [FAQ](#faq)
 
 <img src="docs/images/overview.png" width="820" alt="Agent;Gate 概要">
 
 </div>
 
----
+## できること
 
-## なぜ Agent;Gate なのか
+Codex、Claude Code、OpenCode、Gemini CLI を併用し、API や中継サービスも複数あると、面倒なのは設定です。ファイルを書き換え、キーを探し、どの回線が生きているか確認する作業が増えていきます。
 
-Claude Code、Codex、OpenCode、Gemini CLI を併用し、API プロバイダや中継サービスを複数契約していると、こんな経験はないでしょうか：
+Agent;Gate は、その作業をローカルの Windows アプリにまとめます。
 
-- **プロバイダを替えるたびに設定ファイルを開く**。`settings.json`、`config.toml`、環境変数を一つずつ書き換え、間違えたらロールバック。
-- **API キーが平文で散らばる**。クライアント設定、`.env`、シェル履歴——至るところにキーが残る。
-- **同じキーを何度も入力する**。4 つのクライアントに 4 つの設定形式。プロバイダを 1 つ足すのに 4 回同じ作業。
-- **リクエストが失敗しても原因が見えない**。設定ミスか、キーの期限切れか、上流のレート制限か——推測するしかない。
+- API URL、キー、モデル、予備エンドポイントをプロファイルとして保存。
+- 1 つのゲートウェイで複数クライアントを処理し、クライアントごとに別のルートとキーを使用。
+- クライアント側は一度 `127.0.0.1` に向ければ、以後の切り替えで設定ファイルを何度も編集しない。
+- 実際のキーで最小リクエストを定期送信し、可用率、レイテンシ、直近の結果を表示。
+- リクエスト状態、TTFB/TTFC、Token、キャッシュヒットをリアルタイム表示。
+- Claude Code、Codex、OpenCode がローカルに残したセッションを閲覧・削除。
 
-Agent;Gate はこれらを一箇所に集約します。**プロファイルはローカルに保存され、クライアントは固定のループバックアドレスだけを見る。切り替えは UI でワンクリック。**
+クラウドサービスでも共用プロキシでもありません。アカウント、バックエンド、テレメトリはありません。
 
-|  | 手動で設定変更 | 環境変数スクリプト | **Agent;Gate** |
-| --- | --- | --- | --- |
-| プロバイダ切り替え | 複数ファイル、ミスしやすい | ターミナル再起動が必要 | **ワンクリック、クライアント無変更** |
-| キーの保存 | 平文で散在 | スクリプト内に平文 | **DPAPI 暗号化、クライアントには書かない** |
-| 複数クライアント同期 | 個別に変更 | 個別にエクスポート | **一度の割り当てで全部に反映** |
-| リクエスト可視化 | なし | なし | **TTFT・トークン・キャッシュ率をリアルタイム表示** |
-| 上流障害 | 手動で調査して切替 | 手動切替 | **正常なルートへ自動フェイルオーバー** |
+## クライアント対応状況
 
-## 主な機能
+| クライアント | 状態 | プロトコル |
+| --- | --- | --- |
+| Codex | 安定 | OpenAI Responses、Chat Completions |
+| Claude Code | 実験的 | Anthropic Messages |
+| OpenCode | 実験的 | Anthropic、OpenAI、Gemini |
+| Gemini CLI | 実験的 | Gemini |
 
-- **ワンクリックでプロファイル切り替え** — ゲートウェイ稼働中の切り替えはメモリ上のルート変更だけ。クライアント設定は 1 バイトも変わらず、送信済みリクエストにも影響しません。
-- **ローカル・ループバックゲートウェイ** — `127.0.0.1` のみを待ち受け、4 つのクライアントに専用パスを提供。任意の宛先へ中継するオープンプロキシではありません。
-- **キーはクライアントに渡さない** — 実際の URL とキーを知るのはゲートウェイだけ。クライアントにはローカルアドレスとランダムなローカルトークンのみ。
-- **リクエストのリアルタイム監視** — TTFT/TTFB、トークン使用量、キャッシュヒット率、推論強度を色分け表示。異常がひと目で分かります。
-- **URL プールと自動フェイルオーバー** — 1 プロファイルに最大 20 ルート。直近 1 時間の可用性と平均レイテンシで最良のルートを自動選択し、障害時は即座に切り替え。
-- **実測プローブ** — 実際のキーで最小のメッセージを送信し、本当の可用性とレイテンシを計測。上流が報告したトークン数もそのまま表示。
-- **セッション管理** — Claude Code / Codex / OpenCode がローカルに保存したセッションを一画面に集約。本文の閲覧（ツール呼び出しは除外し発言のみ）、作業ディレクトリでの検索、削除前のドライラン表示に対応。
-- **4 言語対応** — 简体中文 / 繁體中文（台湾）/ 日本語 / English。システムに追従、手動指定も可。切り替えは即時反映。
-- **完全ローカル動作** — サーバーなし、アカウント不要、テレメトリなし。オフラインでもプロファイルを管理できます。
+「実験的」は、クライアント側の設定形式が今後変わる可能性があるという意味です。Agent;Gate は管理対象のフィールドだけを書き換え、解除時に戻しますが、クライアントの大型アップデート後は設定を一度確認してください。
 
-## 仕組み
+## チャネル状態
+
+自動チェックは既定で 2 分ごと。5 分、10 分にも変更できます。固定スケジュールで動くため、「今すぐチェック」を実行しても次回の自動チェック時刻はずれません。
+
+| 結果 | 判定 |
+| --- | --- |
+| 正常 | 成功、5 秒以内 |
+| 快適 | 成功、5 秒超 10 秒以内 |
+| 遅延 | 成功、10 秒超 |
+| 障害 | 失敗、タイムアウト、その他の利用不可結果 |
+
+チャネルごとに監視の停止、チェック用モデルの選択、状態ページからのキー切り替えができます。
+
+## ダウンロード
+
+[Releases](https://github.com/trygn35-ui/agentgate/releases/latest) から最新版を取得できます。
+
+| ファイル | 用途 |
+| --- | --- |
+| `AgentGate-Setup-<version>-x64.exe` | インストーラー版。アプリ内更新対応、推奨 |
+| `AgentGate-Portable-<version>-x64.exe` | ポータブル版。更新時の自己置換は不可 |
+| `SHA256SUMS-<version>.txt` | SHA-256 チェックサム |
+
+Windows 10 1809+ または Windows 11、x64 が必要です。
+
+現在のバイナリには商用コード署名がないため、SmartScreen が「不明な発行元」と表示する場合があります。Release の SHA-256 を確認したうえで、「詳細情報 → 実行」を選択してください。
+
+## 使い方
+
+1. 「API キー」ページでプロファイルを追加。新規プロファイルの既定は OpenAI Responses。
+2. そのプロファイルを使うクライアントを選択。
+3. 「概要」または「状態」ページから割り当て。
+4. クライアントカードをクリックして引き受け。以後はクライアントを普段どおり使います。
+
+解除時は Agent;Gate が変更したフィールドを復元します。プロファイルの切り替えはゲートウェイルートだけを更新し、送信済みのリクエストは中断しません。
 
 ```text
-Claude Code ─┐                                       ┌─ プロファイル A：メインの中継
-Codex ───────┤                                       ├─ プロファイル B：バックアップ
-OpenCode ────┼──▶  127.0.0.1:17863（Agent;Gate）──────┼─ プロファイル C：公式 API 直結
-Gemini CLI ──┘      実際の URL とキーを注入          └─ …
+Claude Code ─┐
+Codex ───────┤
+OpenCode ────┼──> 127.0.0.1:17863 ──> クライアント別ルート ──> 別々の上流
+Gemini CLI ──┘
 ```
 
-1. クライアントには `http://127.0.0.1:17863/...` を**一度だけ**設定。以後は変更不要です。
-2. ゲートウェイはローカルトークンを取り除き、現在のプロファイルに従って実際の上流 URL とキーを注入し、そのまま転送します。
-3. UI でのプロファイル切り替え = ゲートウェイのメモリ上ルートの差し替え。**クライアントは何も気づかず、再起動も不要。**
-4. ゲートウェイ停止時は、接管時に変更したフィールドだけを元に戻します。その間に追加した MCP・プラグイン・コメントはそのまま残ります。
+## データと安全性
+
+- キーは Windows DPAPI で暗号化し、現在の Windows ユーザーに紐付けて保存。
+- 実際の上流 URL とキーはクライアント設定に書き込まない。
+- ゲートウェイはループバックだけで待ち受け、LAN には公開しない。
+- アクティビティ履歴に保存するのはメタデータだけ。プロンプトや応答本文は保存しない。
+- セッション管理は各クライアントのローカル DB を直接読み取る。削除前に対象を表示し、削除後の復元は不可。
+
+データディレクトリ：
+
+```text
+%APPDATA%\agentgate\data\
+├── profiles.json
+├── gateway.json
+├── gateway-recovery.json
+├── settings.json
+├── requests.json
+└── window-state.json
+```
 
 ## スクリーンショット
 
 <details open>
-<summary><b>キー管理</b> — ドラッグで並べ替え、累計使用量、ヘルスタイムライン、ワンクリック切替と実測</summary>
+<summary>キー管理</summary>
 <br>
-<img src="docs/images/keyring.png" width="820" alt="キー管理ページ">
+<img src="docs/images/keyring.png" width="820" alt="キー管理">
 </details>
 
 <details>
-<summary><b>リクエスト監視</b> — TTFT・トークン・キャッシュ率をリアルタイム更新</summary>
+<summary>リクエスト履歴</summary>
 <br>
-<img src="docs/images/activity.png" width="820" alt="アクティビティページ">
+<img src="docs/images/activity.png" width="820" alt="リクエスト履歴">
 </details>
 
 <details>
-<summary><b>設定</b> — 自動起動、トレイ常駐、言語、テーマ、自動更新</summary>
+<summary>設定</summary>
 <br>
-<img src="docs/images/settings.png" width="820" alt="設定ページ">
-</details>
-
-<details>
-<summary><b>ダークテーマ</b></summary>
-<br>
-<img src="docs/images/overview-dark.png" width="820" alt="ダークテーマ">
-</details>
-
-## ダウンロードとインストール
-
-**[Releases](https://github.com/trygn35-ui/agentgate/releases/latest)** からダウンロード：
-
-| ファイル | 説明 |
-| --- | --- |
-| `AgentGate-Setup-<version>-x64.exe` | インストーラー版、**自動更新対応**、推奨 |
-| `AgentGate-Portable-<version>-x64.exe` | ポータブル版、インストール不要、自動更新なし |
-| `SHA256SUMS-<version>.txt` | チェックサム。ダウンロードの完全性を検証できます |
-
-**動作環境**：Windows 10 (1809+) または Windows 11、x64。追加のランタイムは不要です。
-
-> [!NOTE]
-> 現在のビルドには商用コード署名証明書がないため、初回起動時に Windows SmartScreen が「発行元不明」と警告します。
-> **詳細情報 → 実行** で起動できます。気になる場合は `SHA256SUMS` で検証するか、ソースからビルドしてください。
-
-## クイックスタート
-
-1. **プロファイルを作成** — 「キー」ページで「新規」をクリックし、名前・API プロトコル・上流 URL・キーを入力。キーは保存した瞬間に暗号化されます。
-2. **対象クライアントを選択** — プロトコルが合えば、1 つのプロファイルを複数クライアントで共用できます。
-3. **クライアントに割り当て** — 「概要」ページの各クライアントカード下の「キーを選択」からプロファイルを選びます。
-4. **カードをクリックして接管** — ゲートウェイが起動し、**そのクライアントだけ**を接管します。他のクライアントは 1 バイトも変わりません。もう一度クリックすれば解除・復元。
-5. **クライアントをいつも通り使う** — リクエストはゲートウェイ経由で転送され、「アクティビティ」ページでレイテンシと使用量をリアルタイムに確認できます。
-
-以後の切り替えは手順 3 の繰り返しだけ——**設定ファイルには触れず、クライアントの再起動も不要です。**
-
-## 対応クライアント
-
-| クライアント | 設定ファイル | Agent;Gate が管理するフィールド |
-| --- | --- | --- |
-| Claude Code | `~/.claude/settings.json` | ローカル Base URL、ローカル認証、任意でモデルと Tool Search |
-| Codex | `~/.codex/config.toml` | 既存 provider があればその `base_url` のみ。未設定ならゲートウェイ provider を丸ごと作成し、解除時に丸ごと撤去 |
-| OpenCode | `~/.config/opencode/opencode.json(c)` | `provider.agentgate_gateway`、モデル選択、ローカル認証 |
-| Gemini CLI | `~/.gemini/.env`、`~/.gemini/settings.json` | ローカル Base URL、ローカル認証、任意でモデルと認証タイプ |
-
-`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`GEMINI_CLI_HOME`、`OPENCODE_CONFIG`、`XDG_CONFIG_HOME`、`XDG_DATA_HOME` によるパス上書きに対応しています。
-
-<details>
-<summary>既存の設定をどう守るか</summary>
-<br>
-
-- JSON/JSONC は構造を保ったピンポイント編集。コメント、未知のフィールド、プラグイン、Hooks、権限設定はそのまま残ります。
-- Codex に有効な provider がある場合はその `base_url` だけを変更し、`model`・`wire_api`・認証フィールド・`auth.json` には触れません。provider を一度も設定していない新規ユーザーの場合はゲートウェイ provider を丸ごと作成し、解除時に丸ごと撤去します。既存の `mcp_servers` などはそのまま。
-- 初回接管時にフィールド単位のベースラインを取得し、さらに DPAPI で暗号化した元ファイル全体を非常用に保存します。
-- ゲートウェイ停止時は管理フィールドだけを復元し、**ファイル全体のロールバックはしません**。その間に追加した MCP・project・コメントは残ります。
-- provider を手動で切り替えた場合は「接管解除」とみなし、復元をスキップします。
-- 複数ファイルへの書き込みは事前検証のうえアトミックに置換し、失敗時は書き込み済みファイルをロールバックします。
-
-</details>
-
-## セキュリティとプライバシー
-
-API キーを扱うツールなので、以下はすべて**検証可能な事実**として書いています。約束ではありません：
-
-- **サーバーなし、アカウント不要、テレメトリなし。** 通信先は設定した上流のみです。設定画面で更新の確認またはダウンロードを明示的に実行した場合に限り、GitHub Releases にも接続します。パケットキャプチャで確認できます。
-- **キーは Windows DPAPI で暗号化**（Electron `safeStorage`、現在の Windows ユーザーに紐付け）し、暗号文を `%APPDATA%\agentgate\data\profiles.json` に保存。別ユーザー・別マシンでは復号できません。
-- **実際のキーはクライアント設定に書き込みません。** クライアントにあるのは `127.0.0.1` のアドレスとランダムなローカルトークンだけ。一覧・状態の IPC は平文キーを返さず、コピー操作はメインプロセスが直接クリップボードへ書き込みます。
-- **リクエスト本文は保存しません。** 監視が記録するのはレイテンシ、トークン数、モデル名などのメタデータのみ。リクエスト・レスポンスの内容がディスクに書かれることはありません。
-- **ゲートウェイはループバックのみにバインド**。LAN では待ち受けず、4 クライアント向けの固定パスのみを提供する、汎用プロキシではない設計です。
-- **検証可能な配布物** — 各リリースに `SHA256SUMS` を同梱。ソースは完全公開で、自分でビルドして照合できます。
-
-> [!IMPORTANT]
-> 上流や中継サービスの API キーは、各サービスの利用規約とお住まいの地域の法令に従い、正当な方法で取得してください。
-> Agent;Gate はローカルツールであり、API サービスの提供者ではなく、利用先の上流サービスについて責任を負いません。
-
-## データディレクトリ
-
-```text
-%APPDATA%\agentgate\data\
-├── profiles.json           プロファイルと DPAPI 暗号化済みキー
-├── gateway.json            待ち受け設定、永続ルート、暗号化ローカルトークン
-├── gateway-recovery.json   接管前の管理フィールドのベースライン（DPAPI 暗号化）
-├── settings.json           自動起動、トレイ、テーマ、実験的機能
-├── requests.json           直近のリクエストメタデータ（本文なし）
-└── window-state.json       ウィンドウの位置とサイズ
-```
-
-アンインストール後に完全に消したい場合は、このディレクトリごと削除してください。
-
-## 自動更新
-
-インストーラー版は GitHub Releases 経由で自動更新します。設定ページで更新を確認し、バックグラウンドでダウンロード、再起動で適用。
-**インストール前にゲートウェイを停止してクライアント設定を復元する**ため、更新後にクライアントが死んだローカルアドレスへ取り残されることはありません。
-ポータブル版は自己置換できないため、新バージョンの通知とダウンロードページへの案内のみ行います。
-
-## FAQ
-
-<details>
-<summary><b>「発行元不明」と表示される / ウイルス対策ソフトにブロックされる</b></summary>
-<br>
-
-商用コード署名証明書（年間数百ドル）を購入していないためで、未署名の Electron アプリはすべてこうなります。
-**詳細情報 → 実行** で起動してください。気になる場合は `SHA256SUMS` を検証するか、ソースからビルドを。
-
-</details>
-
-<details>
-<summary><b>ポート 17863 が使用中だったら？</b></summary>
-<br>
-
-何もしなくて大丈夫です。初回接管でポート競合に当たった場合は**自動的に空きポートへ移り**、新しいポートをクライアント設定に書き込みます。
-どのクライアントも接管していない状態なら、右上のポート番号をクリックして手動で振り直すこともできます。
-接管中のクライアントがある間はポートをロックします——設定に現在のポートが書かれているため、勝手に変わることはありません。
-
-</details>
-
-<details>
-<summary><b>プロファイル切り替え後、クライアントの再起動は必要？</b></summary>
-<br>
-
-不要です。ゲートウェイ稼働中の切り替えはメモリ上のルート変更だけで、クライアント設定は 1 バイトも変わりません。
-送信済みのリクエストは元の上流のまま完了し、新しいリクエストから新しいプロファイルが使われます。
-
-</details>
-
-<details>
-<summary><b>キーはどこに保存される？ PC を替えるときは？</b></summary>
-<br>
-
-`%APPDATA%\agentgate\data\profiles.json` に、DPAPI で暗号化され**現在の Windows ユーザーに紐付いた**状態で保存されます。
-この紐付けこそが要点で、ファイルを別のマシンへコピーしても**復号できません**。移行後はキーを再入力してください。
-
-</details>
-
-<details>
-<summary><b>リクエスト履歴に会話の内容は残る？</b></summary>
-<br>
-
-残りません。記録されるのはレイテンシ、トークン数、モデル名などのメタデータのみで、リクエスト・レスポンス本文がディスクに書かれることはありません。
-
-</details>
-
-<details>
-<summary><b>ゲートウェイを止めたら、クライアント設定は元に戻る？</b></summary>
-<br>
-
-戻ります。Agent;Gate が復元するのは接管時に変更したフィールドだけで、それ以外（その間に追加した MCP・プラグイン・コメントを含む）はそのまま残ります。
-管理フィールドが外部で変更されていた場合は、あなたの変更を上書きしないよう停止を拒否します。
-
-</details>
-
-<details>
-<summary><b>one-api / new-api / claude-code-router と何が違う？</b></summary>
-<br>
-
-それらは**サーバーサイド**の中継・分配プラットフォームです。デプロイが必要で、データベースを持ち、複数ユーザー向け。
-Agent;Gate は**デスクトップのスタンドアロンツール**です。デプロイもテレメトリもなく、GitHub への通信は明示的な更新確認時だけ。自分の CLI クライアントのためのツールです。
-価値の核心は「プロバイダを替えてもクライアント設定に触れない」「キーは暗号化し、平文を残さない」の 2 点です。
-
+<img src="docs/images/settings.png" width="820" alt="設定">
 </details>
 
 ## 開発
@@ -251,41 +129,13 @@ Node.js 22 と pnpm が必要です。
 
 ```powershell
 pnpm install --frozen-lockfile
-pnpm test        # ユニットテスト（一時ディレクトリのみ使用、実際の設定には触れない）
-pnpm dev         # 開発モード
-pnpm dist        # Windows インストーラー版・ポータブル版のパッケージング
-pnpm release     # 配布物とチェックサムの整理
+pnpm test
+pnpm dev
+pnpm dist
+pnpm release
 ```
 
-技術スタック：Electron + React + TypeScript。ファイル書き込みとキー処理はすべてメインプロセスが担い、レンダラーにファイルシステムへのアクセス権はありません。
-
-<details>
-<summary><code>pnpm dist</code> が <code>Cannot create symbolic link</code> で失敗する</summary>
-
-electron-builder は `winCodeSign` ツールキットをダウンロードして展開します（exe にアイコンとバージョン情報を書き込む `rcedit` が入っています）。
-このアーカイブには macOS の dylib **シンボリックリンク**が含まれており、Windows の非管理者アカウントは既定でシンボリックリンクを作れないため、展開に失敗してビルドが中断します。
-
-対処は次のどちらかで：
-
-- Windows の**開発者モード**を有効にする（設定 → システム → 開発者向け）。一般アカウントでもシンボリックリンクを作成できるようになります；
-- またはツールキットを手動でキャッシュへ展開し、darwin 部分をスキップする：
-
-  ```powershell
-  $cache = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign"
-  # electron-builder-binaries から winCodeSign-2.6.0.7z をダウンロード後：
-  7za x winCodeSign-2.6.0.7z "-o$cache\winCodeSign-2.6.0" '-x!darwin*' -y
-  ```
-
-`signAndEditExecutable: false` での回避は**しないでください**——このスイッチは `rcedit` まで無効化するため、
-出来上がった exe は Electron 標準のアイコンのまま、`ProductName: Electron`、バージョン 33.x になってしまいます。
-
-</details>
-
-## 謝辞
-
-- [Electron](https://www.electronjs.org/) · [electron-builder](https://www.electron.build/) · [electron-updater](https://www.electron.build/auto-update)
-- アイコン：[Lucide](https://lucide.dev/)
-- コミュニティの数々の LLM ゲートウェイ・中継管理ツールに着想を得ています
+ファイル書き込み、DPAPI、ゲートウェイは Electron の Main Process が担当します。React Renderer からファイルシステムへ直接アクセスしません。
 
 ## License
 

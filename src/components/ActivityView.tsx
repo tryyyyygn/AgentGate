@@ -209,6 +209,7 @@ const RequestRow = memo(function RequestRow({
 
 interface ActivityViewProps {
   requests: ActiveRequest[];
+  active?: boolean;
 }
 
 /**
@@ -216,7 +217,7 @@ interface ActivityViewProps {
  *
  * 展示进行中与最近完成的请求，含模型、Token、缓存率与时延指标。
  */
-export function ActivityView({ requests }: ActivityViewProps): ReactElement {
+export function ActivityView({ requests, active = true }: ActivityViewProps): ReactElement {
   const { locale, m, fill } = useI18n();
   const [filter, setFilter] = useState<RequestFilter>("all");
   const [now, setNow] = useState(() => Date.now());
@@ -239,7 +240,7 @@ export function ActivityView({ requests }: ActivityViewProps): ReactElement {
   }), [locale]);
 
   useEffect(() => {
-    if (activeCount === 0) return undefined;
+    if (!active || activeCount === 0) return undefined;
     let timer: number | undefined;
     const syncTimer = () => {
       if (timer !== undefined) window.clearInterval(timer);
@@ -254,12 +255,12 @@ export function ActivityView({ requests }: ActivityViewProps): ReactElement {
       document.removeEventListener("visibilitychange", syncTimer);
       if (timer !== undefined) window.clearInterval(timer);
     };
-  }, [activeCount]);
+  }, [active, activeCount]);
 
   const liveText = activeCount > 0 ? fill(m.stream.streaming, { count: activeCount }) : m.stream.idle;
 
   return (
-    <main className="page-scroll" aria-label={m.stream.title}>
+    <main className="page-scroll" aria-label={m.stream.title} hidden={!active}>
       <div className="page-inner">
         <div className="section-head rise sticky-head" style={{ alignItems: "center" }}>
           <h1>{m.stream.title}</h1>

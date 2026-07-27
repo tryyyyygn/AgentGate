@@ -48,16 +48,17 @@ const GatewayStopSchema = z.object({
   targets: z.array(z.enum(TARGETS)).optional(),
 }).optional()
 
-function changedRoutedConfigFields(existing, input) {
-  const changed = []
-  if (existing.protocol !== input.protocol) changed.push('protocol')
-  return changed
-}
+/** 安全恢复并解除一个方案占用的路由；恢复失败时保留方案和路由。 */
+async function releaseProfileRoutes({ profileId, gatewayState, gatewayService, stopGateway }) {
+  const routedTargets = gatewayState.routes
+    .filter((route) => route.profileId === profileId)
+    .map((route) => route.target)
+  if (routedTargets.length === 0) return undefined
 
-function routedProfileChangeError(fields) {
-  return new Error(
-    `This profile is used by the local gateway. Switch its route or stop the gateway before changing: ${fields.join(', ')}`,
-  )
+  const engaged = new Set(gatewayState.engaged || [])
+  const engagedTargets = routedTargets.filter((target) => engaged.has(target))
+  if (engagedTargets.length > 0) await stopGateway({ targets: engagedTargets })
+  return gatewayService.unassignRoutes(routedTargets)
 }
 
 /**
@@ -176,20 +177,26 @@ function registerIpcHandlers({
     const parsed = SaveProfileSchema.safeParse(input)
     if (!parsed.success) throw new Error(validationMessage(parsed.error))
     const nextProfile = parsed.data
-    return applyService.withLifecycleLock(async () => {
+    return applyService.withLifecycleLock(async ({ stopGateway }) => {
       const gatewayState = gatewayService.getPublicState()
-      const routedTargets = (gatewayState.status === 'running' ? gatewayState.routes : [])
-        .filter((route) => route.profileId === nextProfile.id)
-        .map((route) => route.target)
-      if (routedTargets.length > 0) {
-        const existing = (await profileService.list())
-          .find((profile) => profile.id === nextProfile.id)
-        if (existing) {
-          const changedFields = changedRoutedConfigFields(existing, nextProfile)
-          if (changedFields.length > 0) throw routedProfileChangeError(changedFields)
-        }
+      const existing = nextProfile.id
+        ? (await profileService.list()).find((profile) => profile.id === nextProfile.id)
+        : undefined
+      const routeSnapshot = existing && existing.protocol !== nextProfile.protocol
+        ? await releaseProfileRoutes({
+            profileId: nextProfile.id,
+            gatewayState,
+            gatewayService,
+            stopGateway,
+          })
+        : undefined
+      let saved
+      try {
+        saved = await profileService.save(nextProfile)
+      } catch (error) {
+        if (routeSnapshot) await gatewayService.restoreRoutes(routeSnapshot).catch(() => {})
+        throw error
       }
-      const saved = await profileService.save(nextProfile)
       await gatewayService.refreshProfile(saved.id)
       return saved
     })
@@ -197,20 +204,18 @@ function registerIpcHandlers({
   handle(CHANNELS.duplicateProfile, (_event, id) => profileService.duplicate(id))
   handle(CHANNELS.reorderProfiles, (_event, ids) => profileService.reorder(ids))
   handle(CHANNELS.deleteProfile, (_event, id) => {
-    return applyService.withLifecycleLock(async () => {
+    return applyService.withLifecycleLock(async ({ stopGateway }) => {
       const gatewayState = gatewayService.getPublicState()
-      const routedTargets = gatewayState.routes
-        .filter((route) => route.profileId === id)
-        .map((route) => route.target)
-      if (routedTargets.length === 0) return profileService.delete(id)
-      if (gatewayState.status !== 'stopped') {
-        throw new Error('Switch this gateway route or turn off the local gateway before deleting the profile')
-      }
-      const routeSnapshot = await gatewayService.unassignRoutes(routedTargets)
+      const routeSnapshot = await releaseProfileRoutes({
+        profileId: id,
+        gatewayState,
+        gatewayService,
+        stopGateway,
+      })
       try {
         return await profileService.delete(id)
       } catch (error) {
-        await gatewayService.restoreRoutes(routeSnapshot).catch(() => {})
+        if (routeSnapshot) await gatewayService.restoreRoutes(routeSnapshot).catch(() => {})
         throw error
       }
     })

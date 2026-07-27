@@ -20,7 +20,7 @@ function memoryStore(initial = defaultSettings()) {
 }
 
 describe('SettingsService', () => {
-  it('默认关闭开机自启和实验协议桥，保留托盘与网关恢复', async () => {
+  it('默认关闭开机自启，保留托盘与网关恢复', async () => {
     const app = { setLoginItemSettings: vi.fn() }
     const service = new SettingsService({ store: memoryStore(), app, executablePath: 'D:\\Keydeck.exe' })
 
@@ -31,7 +31,6 @@ describe('SettingsService', () => {
       startGatewayOnLaunch: true,
       theme: 'system',
       language: 'system',
-      experimentalToolBridge: false,
     })
     expect(app.setLoginItemSettings).toHaveBeenCalledWith({
       openAtLogin: false,
@@ -79,14 +78,12 @@ describe('SettingsService', () => {
     const result = await service.update({
       launchAtLogin: true,
       theme: 'dark',
-      experimentalToolBridge: true,
     })
 
     expect(result).toMatchObject({
       launchAtLogin: true,
       closeToTray: true,
       theme: 'dark',
-      experimentalToolBridge: true,
     })
     expect(app.setLoginItemSettings).toHaveBeenLastCalledWith({
       openAtLogin: true,

@@ -525,7 +525,6 @@ export function SessionsView({ onToast, active = true }: SessionsViewProps): Rea
     >
       <div className="sessions-head rise">
         <h1>{m.sessions.title}</h1>
-        <span className="head-note">{m.sessions.subtitle}</span>
         <span style={{ marginLeft: "auto" }} />
         <div className="req-filters" role="radiogroup" aria-label={m.sessions.title}>
           {([

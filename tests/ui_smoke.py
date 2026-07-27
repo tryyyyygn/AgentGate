@@ -1,6 +1,7 @@
 """在隔离浏览器预览中验证 Agent;Gate 主要页面、三语切换、返回交互与紧凑布局。"""
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -86,6 +87,12 @@ with sync_playwright() as playwright:
     page.get_by_role("button", name="OVERVIEW", exact=True).click()
     page.locator(".hero h1").wait_for()
     assert page.locator(".socket-card").count() == 4
+    assert page.locator(".socket-title small").count() == 3
+    assert page.locator(".socket-title small").all_inner_texts() == [
+        "(EXPERIMENTAL)",
+        "(EXPERIMENTAL)",
+        "(EXPERIMENTAL)",
+    ]
     assert page.locator(".meter").count() == 1  # DIVERGENCE METER
     assert "0.529341" in page.locator(".meter-cell").nth(1).inner_text()
     assert "RESET 00:00" in page.locator(".meter-cell").nth(1).inner_text()
@@ -115,14 +122,21 @@ with sync_playwright() as playwright:
         "() => [...document.querySelectorAll('.keyring-actions')].every(node => node.scrollWidth <= node.clientWidth)"
     )
     page.screenshot(path=str(OUTPUT_DIR / "keyring-expanded-1000x620.png"), full_page=False)
+    page.locator(".keyring-expand.open").get_by_role("button", name="COPY", exact=True).click()
+    page.wait_for_function("() => document.querySelectorAll('.keyring-row').length === 4")
+    expanded = page.locator(".keyring-expand.open")
+    assert expanded.count() == 1
+    expanded_name = expanded.locator("xpath=ancestor::article").locator(".keyring-name strong").inner_text()
+    assert "副本" in expanded_name
     page.keyboard.press("Escape")
-    assert page.locator(".keyring-expand.open").count() == 0
+    assert expanded.count() == 0
     page.set_viewport_size({"width": 1280, "height": 800})
 
     # 放弃新建方案后，应用背景必须恢复交互
     page.get_by_role("button", name="NEW", exact=True).first.click()
     editor = page.get_by_role("dialog", name="New connection profile")
     editor.wait_for()
+    assert editor.get_by_role("combobox", name="API protocol").input_value() == "openai-responses"
     editor.get_by_role("textbox", name="Profile name", exact=True).fill("discard regression")
     editor.get_by_role("button", name="CANCEL", exact=True).click()
     discard = page.get_by_role("alertdialog", name="Discard unsaved changes?")
@@ -148,6 +162,30 @@ with sync_playwright() as playwright:
     page.screenshot(path=str(OUTPUT_DIR / "activity-complete-1280x800.png"), full_page=False)
     page.get_by_role("radio", name="FAIL", exact=True).click()
     assert page.locator(".request-row").count() == 1
+    page.get_by_role("radio", name="ALL", exact=True).click()
+
+    # 状态：固定时钟倒计时、四级状态与行尾切换按钮
+    page.get_by_role("button", name="STATUS", exact=True).click()
+    status = page.get_by_role("main", name="CHANNEL STATUS", exact=True)
+    status.get_by_role("heading", name="CHANNEL STATUS", exact=True).wait_for()
+    console_text = status.locator(".status-console").inner_text()
+    assert console_text.count("AUTO PROBE") == 1
+    assert re.search(r"\b\d{1,3}s\b", console_text), console_text
+    assert status.locator(".status-row-action").count() == page.locator(".status-row").count()
+    assert status.locator(".status-row-name small").count() == 0
+    assert "RESPONSES" not in status.locator(".status-table").inner_text()
+    page.set_viewport_size({"width": 1000, "height": 620})
+    page.wait_for_timeout(700)
+    assert status.locator(".status-table").evaluate("node => node.scrollWidth <= node.clientWidth")
+    page.screenshot(path=str(OUTPUT_DIR / "status-1000x620.png"), full_page=False)
+    page.set_viewport_size({"width": 1280, "height": 800})
+
+    # 动态页常驻；切走再回来，筛选不会重置。
+    page.locator(".top-nav").get_by_role("button", name="STREAM").click()
+    page.get_by_role("radio", name="DONE", exact=True).click()
+    page.get_by_role("button", name="STATUS", exact=True).click()
+    page.locator(".top-nav").get_by_role("button", name="STREAM").click()
+    assert page.get_by_role("radio", name="DONE", exact=True).get_attribute("aria-checked") == "true"
     page.get_by_role("radio", name="ALL", exact=True).click()
 
     # 会话：默认保留更新时间和 ID 尾号，选中后才计算消息数且时间不消失
@@ -194,7 +232,9 @@ with sync_playwright() as playwright:
     # 设置
     page.get_by_role("button", name="CONFIG", exact=True).click()
     page.get_by_role("heading", name="Config", exact=True).wait_for()
-    assert page.get_by_text("Codex tool bridge").is_visible()
+    assert page.get_by_text("Codex tool bridge").count() == 0
+    assert page.locator(".settings-row-copy small").count() == 0
+    assert page.get_by_text("Current version 1.7.2", exact=True).is_visible()
 
     page.get_by_role("button", name="OVERVIEW", exact=True).click()
     layouts = {

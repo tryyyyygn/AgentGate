@@ -6,6 +6,7 @@ globalThis.window = {};
 
 const { KeyringView } = await import("../src/components/KeyringView");
 const { ActivityView } = await import("../src/components/ActivityView");
+const { OverviewView } = await import("../src/components/OverviewView");
 const {
   cascadeSessionIds,
   groupedSessionRows,
@@ -20,12 +21,14 @@ const {
   parseStoredProbeRecords,
   parseStoredProbeModels,
   probeAvailability,
+  probeCountdownSeconds,
   probeModelOptions,
   probeProfilesTogether,
   probeState,
   storedAutoProbeEnabled,
   storedProbeInterval,
 } = await import("../src/components/StatusView");
+const { BLANK_PROFILE_INPUT } = await import("../src/config");
 const { I18nProvider, MESSAGES } = await import("../src/i18n");
 const {
   computeDivergence,
@@ -79,6 +82,12 @@ function codexSession(id, parentNativeId) {
 }
 
 describe("frontend state boundaries", () => {
+  it("新建方案默认使用 OpenAI Responses 并指向 Codex", () => {
+    expect(BLANK_PROFILE_INPUT.protocol).toBe("openai-responses");
+    expect(BLANK_PROFILE_INPUT.targets).toEqual(["codex"]);
+    expect(BLANK_PROFILE_INPUT.enableToolSearch).toBe(false);
+  });
+
   it("只用实际 engaged 的路由计算分歧率", () => {
     const first = profile("00000000-0000-4000-8000-000000000001", "First", "claude", 400);
     const second = profile("00000000-0000-4000-8000-000000000002", "Second", "codex", 200);
@@ -231,7 +240,6 @@ describe("frontend state boundaries", () => {
           startGatewayOnLaunch: true,
           theme: "system",
           language: "en",
-          experimentalToolBridge: false,
         },
         busy: false,
         update: { state: "downloading", currentVersion: "1.6.4", portable: false, percent: 42 },
@@ -246,6 +254,8 @@ describe("frontend state boundaries", () => {
     expect(html).toContain("42%");
     expect(html).not.toContain(MESSAGES.en.config.checkUpdate);
     expect(html).toContain("disabled");
+    expect(html).not.toContain("tool bridge");
+    expect(html).not.toContain("Starts to tray");
   });
 
   it("Keyring 把 99% 缓存命中率显示为绿色", () => {
@@ -289,7 +299,7 @@ describe("frontend state boundaries", () => {
     expect(html).toContain("99.0%");
   });
 
-  it("渠道实测只把成功的慢响应标为延迟，任何不可用都标为故障", () => {
+  it("渠道实测按 5 秒和 10 秒分四级，任何不可用都标为故障", () => {
     const sample = (ok, totalMs) => ({
       ok,
       firstByteMs: Math.min(totalMs, 200),
@@ -299,12 +309,22 @@ describe("frontend state boundaries", () => {
     });
 
     expect(probeState(sample(true, 4_999))).toBe("healthy");
-    expect(probeState(sample(true, 5_000))).toBe("limited");
+    expect(probeState(sample(true, 5_000))).toBe("healthy");
+    expect(probeState(sample(true, 5_001))).toBe("smooth");
+    expect(probeState(sample(true, 10_000))).toBe("smooth");
+    expect(probeState(sample(true, 10_001))).toBe("limited");
     expect(probeState({ ...sample(false, 200), statusCode: 408 })).toBe("unhealthy");
     expect(probeState({ ...sample(false, 200), statusCode: 429 })).toBe("unhealthy");
     expect(probeState({ ...sample(false, 200), statusCode: 503 })).toBe("unhealthy");
     expect(probeState(sample(false, 200))).toBe("unhealthy");
     expect(probeAvailability([sample(true, 200), sample(false, 200), sample(true, 200)])).toBe(67);
+  });
+
+  it("状态倒计时按秒显示，手动检测不需要改变固定时钟", () => {
+    const now = Date.parse("2026-07-27T00:00:00.000Z");
+    expect(probeCountdownSeconds(now + 300_000, now)).toBe(300);
+    expect(probeCountdownSeconds(now + 299_001, now)).toBe(300);
+    expect(probeCountdownSeconds(now - 1, now)).toBe(0);
   });
 
   it("状态页隐藏时仍保持挂载", () => {
@@ -318,13 +338,86 @@ describe("frontend state boundaries", () => {
     expect(html).toContain('hidden=""');
   });
 
-  it("同一轮渠道实测会同时发出，并独立保留单个失败", async () => {
+  it("密钥页和动态页隐藏时也保持挂载", () => {
+    const common = {
+      profiles: [],
+      gateway: {
+        status: "stopped",
+        host: "127.0.0.1",
+        port: 17863,
+        targets: [],
+        engaged: [],
+        routes: [],
+      },
+      busy: null,
+      loading: false,
+      testingIds: new Set(),
+      onCreate: vi.fn(),
+      onEdit: vi.fn(),
+      onDuplicate: vi.fn(),
+      onDelete: vi.fn(),
+      onApply: vi.fn(),
+      onTest: vi.fn(),
+      onTestAll: vi.fn(),
+      onDiscoverModels: vi.fn(),
+      onProbe: vi.fn(),
+      onCopyKey: vi.fn(),
+      onReorder: vi.fn(),
+      onRetry: vi.fn(),
+      active: false,
+    };
+    const keys = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(KeyringView, common),
+    ));
+    const activity = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(ActivityView, { requests: [], active: false }),
+    ));
+
+    expect(keys).toContain('hidden=""');
+    expect(activity).toContain('hidden=""');
+  });
+
+  it("首页仅将非 Codex 客户端标为实验性", () => {
+    const html = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(OverviewView, {
+        profiles: [],
+        clients: [],
+        gateway: {
+          status: "stopped",
+          host: "127.0.0.1",
+          port: 17863,
+          targets: [],
+          engaged: [],
+          routes: [],
+        },
+        requests: [],
+        activeRequestCount: 0,
+        busy: false,
+        onApply: vi.fn(),
+        onEngage: vi.fn(),
+        onRelease: vi.fn(),
+        onGoActivity: vi.fn(),
+      }),
+    ));
+
+    expect(html.match(/EXPERIMENTAL/g)).toHaveLength(3);
+    expect(html).not.toMatch(/CODEX[^<]*EXPERIMENTAL/);
+  });
+
+  it("同一轮渠道实测会同时发出，并在各自完成时立即回传", async () => {
     const pending = new Map();
     const called = [];
+    const settled = [];
     const batch = probeProfilesTogether([{ id: "first" }, { id: "second" }], (id) => {
       called.push(id);
       return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
-    });
+    }, (item) => settled.push(item));
 
     expect(called).toEqual(["first", "second"]);
     pending.get("first").resolve({
@@ -334,11 +427,17 @@ describe("frontend state boundaries", () => {
       model: "gpt-test",
       checkedAt: "2026-07-26T00:00:00.000Z",
     });
+    await Promise.resolve();
+    expect(settled).toHaveLength(1);
+    expect(settled[0]).toMatchObject({ profile: { id: "first" }, result: { ok: true } });
+
     pending.get("second").reject(new Error("second unavailable"));
 
     const result = await batch;
     expect(result[0].result.ok).toBe(true);
     expect(result[1].error).toContain("second unavailable");
+    expect(settled[1]).toMatchObject({ profile: { id: "second" } });
+    expect(settled[1].error).toContain("second unavailable");
   });
 
   it("状态页恢复暂停、间隔和历史记录时不会恢复伪检测状态", () => {

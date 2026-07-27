@@ -70,7 +70,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   startGatewayOnLaunch: true,
   theme: "system",
   language: "system",
-  experimentalToolBridge: false,
 };
 
 export const EMPTY_BOOTSTRAP: BootstrapData = {
@@ -91,14 +90,14 @@ export const EMPTY_BOOTSTRAP: BootstrapData = {
 
 export const BLANK_PROFILE_INPUT: SaveProfileInput = {
   name: "",
-  protocol: "anthropic",
+  protocol: "openai-responses",
   baseUrl: "",
   endpoints: [{ url: "" }],
   apiKey: "",
   model: "",
   authMode: "bearer",
-  targets: ["claude"],
-  enableToolSearch: true,
+  targets: ["codex"],
+  enableToolSearch: false,
   autoSwitch: {
     enabled: false,
     intervalMinutes: 2,

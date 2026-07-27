@@ -16,7 +16,6 @@ import type { AppLanguage, AppSettings, AppTheme, UpdateState } from "../types";
 
 interface SettingToggleProps {
   title: string;
-  description: string;
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void;
@@ -24,7 +23,6 @@ interface SettingToggleProps {
 
 function SettingToggle({
   title,
-  description,
   checked,
   disabled,
   onChange,
@@ -33,7 +31,6 @@ function SettingToggle({
     <label className={`settings-row ${disabled ? "disabled" : ""}`}>
       <span className="settings-row-copy">
         <strong>{title}</strong>
-        <small>{description}</small>
       </span>
       <input
         type="checkbox"
@@ -98,10 +95,9 @@ function UpdateRow({
   return (
     <div className="settings-theme-row">
       <span className="settings-row-copy">
-        <strong>{m.config.update}</strong>
-        <small className={state === "error" ? "tier-bad" : state === "ready" ? "tier-good" : ""}>
+        <strong className={state === "error" ? "tier-bad" : state === "ready" ? "tier-good" : ""}>
           {description}
-        </small>
+        </strong>
       </span>
       {state === "ready" && !update?.portable ? (
         <button type="button" className="primary-pill" onClick={onInstall}>
@@ -151,31 +147,21 @@ export function SettingsView({
         <div className="settings-card rise-1">
           <SettingToggle
             title={m.config.launchAtLogin}
-            description={m.config.launchAtLoginDesc}
             checked={settings.launchAtLogin}
             disabled={busy}
             onChange={(launchAtLogin) => onChange({ launchAtLogin })}
           />
           <SettingToggle
             title={m.config.closeToTray}
-            description={m.config.closeToTrayDesc}
             checked={settings.closeToTray}
             disabled={busy}
             onChange={(closeToTray) => onChange({ closeToTray })}
           />
           <SettingToggle
             title={m.config.startGateway}
-            description={m.config.startGatewayDesc}
             checked={settings.startGatewayOnLaunch}
             disabled={busy}
             onChange={(startGatewayOnLaunch) => onChange({ startGatewayOnLaunch })}
-          />
-          <SettingToggle
-            title={m.config.toolBridge}
-            description={m.config.toolBridgeDesc}
-            checked={settings.experimentalToolBridge}
-            disabled={busy}
-            onChange={(experimentalToolBridge) => onChange({ experimentalToolBridge })}
           />
           <UpdateRow
             update={update}
@@ -187,7 +173,6 @@ export function SettingsView({
           <div className="settings-theme-row" style={{ borderTop: "1px solid var(--line)" }}>
             <span className="settings-row-copy">
               <strong>{m.config.language}</strong>
-              <small>{m.config.languageDesc}</small>
             </span>
             <div className="theme-segments" role="radiogroup" aria-label={m.config.language}>
               {LANGUAGES.map((language) => (
@@ -208,7 +193,6 @@ export function SettingsView({
           <div className="settings-theme-row">
             <span className="settings-row-copy">
               <strong>{m.config.attractorField}</strong>
-              <small>{m.config.attractorFieldDesc}</small>
             </span>
             <div className="theme-segments" role="radiogroup" aria-label={m.config.attractorField}>
               {THEMES.map((theme) => (

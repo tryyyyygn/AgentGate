@@ -128,7 +128,7 @@ interface KeyringViewProps {
   error?: string;
   onCreate: () => void;
   onEdit: (profile: Profile) => void;
-  onDuplicate: (profile: Profile) => void;
+  onDuplicate: (profile: Profile) => Promise<Profile | undefined>;
   onDelete: (profile: Profile) => void;
   onApply: (id: string, targets: ClientTarget[]) => void;
   onTest: (id: string) => void;
@@ -140,6 +140,7 @@ interface KeyringViewProps {
   onCopyKey: (profile: Profile) => void;
   onReorder: (ids: string[]) => void;
   onRetry: () => void;
+  active?: boolean;
 }
 
 /**
@@ -168,6 +169,7 @@ export function KeyringView({
   onCopyKey,
   onReorder,
   onRetry,
+  active = true,
 }: KeyringViewProps): ReactElement {
   const { locale, m, fill } = useI18n();
   const [expandedId, setExpandedId] = useState<string>();
@@ -206,8 +208,13 @@ export function KeyringView({
     onReorder(ids);
   }
 
+  async function handleDuplicate(profile: Profile): Promise<void> {
+    const duplicate = await onDuplicate(profile);
+    if (duplicate) setExpandedId(duplicate.id);
+  }
+
   return (
-    <main className="page-scroll" aria-label={m.keys.title}>
+    <main className="page-scroll" aria-label={m.keys.title} hidden={!active}>
       <div className="page-inner">
         <div className="section-head rise">
           <h1>{m.keys.title}</h1>
@@ -535,7 +542,7 @@ export function KeyringView({
                               type="button"
                               className="ghost-pill"
                               disabled={Boolean(busy)}
-                              onClick={() => onDuplicate(profile)}
+                              onClick={() => void handleDuplicate(profile)}
                             >
                               <CopyPlus size={12} />{m.keys.duplicate}
                             </button>

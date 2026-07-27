@@ -174,7 +174,6 @@ export interface AppSettings {
   startGatewayOnLaunch: boolean;
   theme: AppTheme;
   language: AppLanguage;
-  experimentalToolBridge: boolean;
 }
 
 export type ActiveRequestState =

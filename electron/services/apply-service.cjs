@@ -211,13 +211,14 @@ class ApplyService {
    *
    * 回调必须使用传入的 apply，避免重入公开 apply 后等待自身锁。
    *
-   * @param {(context: {apply: Function}) => Promise<unknown>} operation 受保护操作。
+   * @param {(context: {apply: Function, stopGateway: Function}) => Promise<unknown>} operation 受保护操作。
    * @returns {Promise<unknown>} 回调结果。
    */
   async withLifecycleLock(operation) {
     if (typeof operation !== 'function') throw new Error('Lifecycle operation must be a function')
     return this.serial.run(() => operation({
       apply: (id, targets, options) => this._assignProfileLocked(id, targets, options),
+      stopGateway: (settings) => this._stopGatewayLocked(settings),
     }))
   }
 
@@ -314,100 +315,102 @@ class ApplyService {
    */
   async stopGateway(settings = {}) {
     if (!this.gatewayService) throw new Error('Local gateway is unavailable')
-    return this.serial.run(async () => {
-      const allGroups = this.gatewayService.getRouteGroups()
-      const gatewayState = this.gatewayService.getPublicState()
-      const preserveResumeIntent = settings.preserveResumeIntent === true
-      const lifecycle = typeof this.gatewayService.getLifecycleState === 'function'
-        ? this.gatewayService.getLifecycleState()
-        : { resumeTargets: [] }
-      // 只放掉被点名的客户端；省略时放掉全部（「全部断开」按钮）
-      const engaged = new Set(gatewayState.engaged || [])
-      const releasing = new Set(settings.targets === undefined
-        ? engaged
-        : settings.targets.filter((target) => engaged.has(target)))
-      const nextResumeTargets = preserveResumeIntent
-        ? (lifecycle.resumeTargets || [])
-        : settings.targets === undefined
-          ? []
-          : (lifecycle.resumeTargets || []).filter((target) => !settings.targets.includes(target))
-      if (releasing.size === 0) {
-        if (preserveResumeIntent) {
-          if (gatewayState.status === 'running' || gatewayState.status === 'starting') {
-            const state = await this.gatewayService.stop({
-              preserveResumeIntent: true,
-              resumeTargets: nextResumeTargets,
-            })
-            return { ...state, skippedTargets: [] }
-          }
-          return { ...gatewayState, skippedTargets: [] }
-        }
-        const state = await this.gatewayService.setEngagedTargets([], {
-          resumeTargets: nextResumeTargets,
-        })
-        return { ...state, skippedTargets: [] }
-      }
+    return this.serial.run(() => this._stopGatewayLocked(settings))
+  }
 
-      // 恢复流程按 group 走，把它裁剪到只剩要放掉的客户端
-      const groups = allGroups
-        .map((group) => ({
-          ...group,
-          targets: group.targets.filter((target) => releasing.has(target)),
-        }))
-        .filter((group) => group.targets.length > 0)
-
-      const remaining = [...engaged].filter((target) => !releasing.has(target))
-      const encryptedToken = this.gatewayService.persisted?.encryptedToken
-      let localToken = this.gatewayService.localToken
-      if (!localToken && encryptedToken) {
-        try {
-          localToken = this.vault.decrypt(encryptedToken)
-        } catch {
-          localToken = undefined
-        }
-      }
-
-      const baselineData = GatewayBaselineStoreSchema.parse(await this.gatewayBaselineStore.read())
-      let recovery
-      for (let attempt = 0; attempt < GATEWAY_RECOVERY_ATTEMPTS; attempt += 1) {
-        recovery = await this._prepareGatewayRecovery({
-          groups,
-          gatewayState,
-          localToken,
-          baselineData,
-        })
-        try {
-          await this._commitDrafts(recovery.drafts)
-          await this._verifyGatewayRecovery(recovery.verifications)
-          break
-        } catch (error) {
-          recovery = undefined
-          if (!isConfigurationRace(error)) throw error
-        }
-      }
-      if (!recovery) {
-        const targets = groups.flatMap((group) => group.targets).join(', ')
-        throw new Error(`Configuration kept changing while stopping the gateway: ${targets}`)
-      }
-      // 还有客户端接管着就让服务器继续跑，只把这几个从接管集合里摘掉
-      const state = remaining.length > 0
-        ? await this.gatewayService.setEngagedTargets(remaining, { resumeTargets: nextResumeTargets })
-        : await this.gatewayService.stop({
-            clearRoutes: false,
-            preserveResumeIntent,
+  async _stopGatewayLocked(settings = {}) {
+    const allGroups = this.gatewayService.getRouteGroups()
+    const gatewayState = this.gatewayService.getPublicState()
+    const preserveResumeIntent = settings.preserveResumeIntent === true
+    const lifecycle = typeof this.gatewayService.getLifecycleState === 'function'
+      ? this.gatewayService.getLifecycleState()
+      : { resumeTargets: [] }
+    // 只放掉被点名的客户端；省略时放掉全部（「全部断开」按钮）
+    const engaged = new Set(gatewayState.engaged || [])
+    const releasing = new Set(settings.targets === undefined
+      ? engaged
+      : settings.targets.filter((target) => engaged.has(target)))
+    const nextResumeTargets = preserveResumeIntent
+      ? (lifecycle.resumeTargets || [])
+      : settings.targets === undefined
+        ? []
+        : (lifecycle.resumeTargets || []).filter((target) => !settings.targets.includes(target))
+    if (releasing.size === 0) {
+      if (preserveResumeIntent) {
+        if (gatewayState.status === 'running' || gatewayState.status === 'starting') {
+          const state = await this.gatewayService.stop({
+            preserveResumeIntent: true,
             resumeTargets: nextResumeTargets,
           })
-      const nextBaselines = { ...baselineData.baselines }
-      for (const target of recovery.clearedTargets) delete nextBaselines[target]
-      await this.gatewayBaselineStore.write({
-        version: GATEWAY_BASELINE_VERSION,
-        baselines: nextBaselines,
-      })
-      return {
-        ...state,
-        skippedTargets: [...new Set(recovery.skippedTargets)],
+          return { ...state, skippedTargets: [] }
+        }
+        return { ...gatewayState, skippedTargets: [] }
       }
+      const state = await this.gatewayService.setEngagedTargets([], {
+        resumeTargets: nextResumeTargets,
+      })
+      return { ...state, skippedTargets: [] }
+    }
+
+    // 恢复流程按 group 走，把它裁剪到只剩要放掉的客户端
+    const groups = allGroups
+      .map((group) => ({
+        ...group,
+        targets: group.targets.filter((target) => releasing.has(target)),
+      }))
+      .filter((group) => group.targets.length > 0)
+
+    const remaining = [...engaged].filter((target) => !releasing.has(target))
+    const encryptedToken = this.gatewayService.persisted?.encryptedToken
+    let localToken = this.gatewayService.localToken
+    if (!localToken && encryptedToken) {
+      try {
+        localToken = this.vault.decrypt(encryptedToken)
+      } catch {
+        localToken = undefined
+      }
+    }
+
+    const baselineData = GatewayBaselineStoreSchema.parse(await this.gatewayBaselineStore.read())
+    let recovery
+    for (let attempt = 0; attempt < GATEWAY_RECOVERY_ATTEMPTS; attempt += 1) {
+      recovery = await this._prepareGatewayRecovery({
+        groups,
+        gatewayState,
+        localToken,
+        baselineData,
+      })
+      try {
+        await this._commitDrafts(recovery.drafts)
+        await this._verifyGatewayRecovery(recovery.verifications)
+        break
+      } catch (error) {
+        recovery = undefined
+        if (!isConfigurationRace(error)) throw error
+      }
+    }
+    if (!recovery) {
+      const targets = groups.flatMap((group) => group.targets).join(', ')
+      throw new Error(`Configuration kept changing while stopping the gateway: ${targets}`)
+    }
+    // 还有客户端接管着就让服务器继续跑，只把这几个从接管集合里摘掉
+    const state = remaining.length > 0
+      ? await this.gatewayService.setEngagedTargets(remaining, { resumeTargets: nextResumeTargets })
+      : await this.gatewayService.stop({
+          clearRoutes: false,
+          preserveResumeIntent,
+          resumeTargets: nextResumeTargets,
+        })
+    const nextBaselines = { ...baselineData.baselines }
+    for (const target of recovery.clearedTargets) delete nextBaselines[target]
+    await this.gatewayBaselineStore.write({
+      version: GATEWAY_BASELINE_VERSION,
+      baselines: nextBaselines,
     })
+    return {
+      ...state,
+      skippedTargets: [...new Set(recovery.skippedTargets)],
+    }
   }
 
   /**

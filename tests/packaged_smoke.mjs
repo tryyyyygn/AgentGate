@@ -139,7 +139,7 @@ try {
   })) {
     throw new Error('Packaged status probe intervals are incorrect')
   }
-  await client.evaluate("window.agentgate.updateSettings({ theme: 'dark', experimentalToolBridge: false })")
+  await client.evaluate("window.agentgate.updateSettings({ theme: 'dark' })")
 
   const common = {
     protocol: 'openai-responses',
