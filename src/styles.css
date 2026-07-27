@@ -1397,14 +1397,6 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .keyring-actions { display: flex; gap: 3px; margin-top: auto; padding-top: 10px; }
 
 /* ---------- 渠道状态 ---------- */
-.status-page,
-.activity-page { --page-info: #4D7078; }
-[data-theme="dark"] .status-page,
-[data-theme="dark"] .activity-page { --page-info: #7296A0; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .status-page,
-  :root:not([data-theme="light"]) .activity-page { --page-info: #7296A0; }
-}
 .status-inner { max-width: 1180px; }
 .status-head {
   display: grid;
@@ -1533,7 +1525,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .status-row:last-child { border-bottom: 0; }
 .status-row:hover { background: var(--soft); }
 .status-row.healthy { --status-tone: var(--good); }
-.status-row.smooth { --status-tone: var(--page-info); }
+.status-row.smooth { --status-tone: var(--cool); }
 .status-row.limited { --status-tone: var(--warn); }
 .status-row.unhealthy { --status-tone: var(--bad); }
 .status-row.checking { --status-tone: var(--opencode); }
@@ -1633,7 +1625,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   white-space: nowrap;
 }
 .status-row-availability.healthy strong { color: var(--good); }
-.status-row-availability.smooth strong { color: var(--page-info); }
+.status-row-availability.smooth strong { color: var(--cool); }
 .status-row-availability.limited strong { color: var(--warn); }
 .status-row-availability.unhealthy strong { color: var(--bad); }
 .status-row-history { min-width: 0; }
@@ -1654,7 +1646,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   animation: bar-in 360ms cubic-bezier(.2, .9, .25, 1) backwards;
 }
 .status-pulse-bar.healthy { background: var(--good); }
-.status-pulse-bar.smooth { background: var(--page-info); }
+.status-pulse-bar.smooth { background: var(--cool); }
 .status-pulse-bar.limited { background: var(--warn); }
 .status-pulse-bar.unhealthy { background: var(--bad); }
 .status-pulse-bar.empty { height: 3px; opacity: .55; animation: none; }
@@ -1871,8 +1863,6 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 }
 
 /* ---------- 动态 ---------- */
-.activity-page .tone-blue { --tone: var(--page-info); }
-.activity-page .tier-info { color: var(--page-info); }
 .req-filters { display: inline-flex; gap: 12px; margin-left: auto; }
 .req-filters button {
   padding: 2px 0;
@@ -1966,7 +1956,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .request-tokens { min-width: 0; white-space: nowrap; font-family: var(--mono); }
 .request-tokens .tok-io { display: flex; gap: 7px; }
 .request-tokens .tok-in { font-size: var(--fs-sm); color: var(--good); }
-.request-tokens .tok-out { font-size: var(--fs-sm); color: var(--page-info); }
+.request-tokens .tok-out { font-size: var(--fs-sm); color: var(--cool); }
 /* 三个口径并排，谁也不顶替谁——一行有的是地方 */
 .request-tokens .tok-detail {
   display: flex;

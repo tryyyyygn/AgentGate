@@ -172,6 +172,45 @@ with sync_playwright() as playwright:
     page.get_by_role("button", name="KEYS", exact=True).click()
     page.get_by_role("heading", name="Attractor Fields", exact=True).wait_for()
     profile_rows = page.locator(".keyring-row")
+
+    # 相邻下移：预览换位后鼠标会落到源行，松手仍须提交已经显示的顺序。
+    adjacent_source_id = profile_rows.first.get_attribute("data-flip-id")
+    adjacent_target_id = profile_rows.nth(1).get_attribute("data-flip-id")
+    assert adjacent_source_id is not None and adjacent_target_id is not None
+    adjacent_source = page.locator(f'.keyring-row[data-flip-id="{adjacent_source_id}"]')
+    adjacent_target = page.locator(f'.keyring-row[data-flip-id="{adjacent_target_id}"]')
+    adjacent_box = adjacent_target.bounding_box()
+    assert adjacent_box is not None
+    adjacent_x = adjacent_box["x"] + adjacent_box["width"] / 2
+    adjacent_y = adjacent_box["y"] + adjacent_box["height"] - 2
+    adjacent_transfer = page.evaluate_handle("new DataTransfer()")
+    adjacent_source.dispatch_event("dragstart", {"dataTransfer": adjacent_transfer})
+    adjacent_target.dispatch_event("dragover", {
+        "dataTransfer": adjacent_transfer,
+        "clientX": adjacent_x,
+        "clientY": adjacent_y,
+    })
+    page.wait_for_function(
+        "id => document.querySelectorAll('.keyring-row')[1]?.dataset.flipId === id",
+        arg=adjacent_source_id,
+    )
+    adjacent_source.dispatch_event("dragover", {
+        "dataTransfer": adjacent_transfer,
+        "clientX": adjacent_x,
+        "clientY": adjacent_y,
+    })
+    adjacent_source.dispatch_event("drop", {
+        "dataTransfer": adjacent_transfer,
+        "clientX": adjacent_x,
+        "clientY": adjacent_y,
+    })
+    adjacent_source.dispatch_event("dragend", {"dataTransfer": adjacent_transfer})
+    page.wait_for_function(
+        "([first, second]) => { const rows = document.querySelectorAll('.keyring-row'); return rows[0]?.dataset.flipId === first && rows[1]?.dataset.flipId === second; }",
+        arg=[adjacent_target_id, adjacent_source_id],
+    )
+
+    profile_rows = page.locator(".keyring-row")
     source_id = profile_rows.first.get_attribute("data-flip-id")
     target_id = profile_rows.last.get_attribute("data-flip-id")
     assert source_id is not None and target_id is not None
@@ -220,7 +259,11 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(100)
     assert "drop-after" in second_group.get_attribute("class")
     assert group_heads.last.locator(".keyring-group-toggle strong").inner_text() == first_group_name
-    second_group.dispatch_event("drop", {
+    first_group.dispatch_event("dragover", {
+        "dataTransfer": group_transfer,
+        "clientY": second_box["y"] + second_box["height"] - 2,
+    })
+    first_group.dispatch_event("drop", {
         "dataTransfer": group_transfer,
         "clientY": second_box["y"] + second_box["height"] - 2,
     })
@@ -239,7 +282,7 @@ with sync_playwright() as playwright:
     page.locator(".top-nav").get_by_role("button", name="STREAM").click()
     stream = page.get_by_role("main", name="Stream", exact=True)
     stream.get_by_role("heading", name="Stream", exact=True).wait_for()
-    assert stream.evaluate("node => getComputedStyle(node).getPropertyValue('--page-info').trim().toUpperCase()") == "#4D7078"
+    assert stream.evaluate("node => getComputedStyle(node).getPropertyValue('--cool').trim().toUpperCase()") == "#1F5F6B"
     assert page.locator(".request-row").count() == 3
     assert stream.locator(".request-row").first.evaluate(
         "node => getComputedStyle(node).animationName"
@@ -262,7 +305,7 @@ with sync_playwright() as playwright:
     assert status.locator(".status-row-action").count() == page.locator(".status-row").count()
     assert status.locator(".status-row-name small").count() == 0
     assert status.locator(".status-row-availability small").count() == 0
-    assert status.evaluate("node => getComputedStyle(node).getPropertyValue('--page-info').trim().toUpperCase()") == "#4D7078"
+    assert status.evaluate("node => getComputedStyle(node).getPropertyValue('--cool').trim().toUpperCase()") == "#1F5F6B"
     assert status.evaluate(
         "() => [...document.querySelectorAll('.status-row')].every(row => row.querySelectorAll('.status-pulse-bar').length === 30)"
     )
@@ -352,9 +395,9 @@ with sync_playwright() as playwright:
     page.get_by_role("heading", name="Config", exact=True).wait_for()
     assert page.get_by_text("Codex tool bridge").count() == 0
     assert page.locator(".settings-row-copy small").count() == 0
-    assert page.get_by_text("Current version 1.8.0", exact=True).is_visible()
+    assert page.get_by_text("Current version 1.8.1", exact=True).is_visible()
 
-    # 深色主题下局部信息蓝仍保持低饱和，不回退到全局高饱和蓝。
+    # 深色主题恢复原有的高对比信息蓝。
     page.get_by_role("radio", name="β FIELD", exact=True).click()
     page.wait_for_timeout(250)
     page.set_viewport_size({"width": 1000, "height": 620})
@@ -363,16 +406,16 @@ with sync_playwright() as playwright:
     dark_status.locator(".status-table").wait_for()
     page.wait_for_timeout(500)
     assert dark_status.evaluate(
-        "node => getComputedStyle(node).getPropertyValue('--page-info').trim().toUpperCase()"
-    ) == "#7296A0"
+        "node => getComputedStyle(node).getPropertyValue('--cool').trim().toUpperCase()"
+    ) == "#00B3FF"
     page.screenshot(path=str(OUTPUT_DIR / "status-dark-1000x620.png"), full_page=False)
     page.locator(".top-nav").get_by_role("button", name="STREAM").click()
     dark_stream = page.get_by_role("main", name="Stream", exact=True)
     dark_stream.locator(".request-row").first.wait_for()
     page.wait_for_timeout(500)
     assert dark_stream.evaluate(
-        "node => getComputedStyle(node).getPropertyValue('--page-info').trim().toUpperCase()"
-    ) == "#7296A0"
+        "node => getComputedStyle(node).getPropertyValue('--cool').trim().toUpperCase()"
+    ) == "#00B3FF"
     page.screenshot(path=str(OUTPUT_DIR / "activity-dark-1000x620.png"), full_page=False)
 
     page.get_by_role("button", name="OVERVIEW", exact=True).click()

@@ -386,7 +386,8 @@ export function KeyringView({
   const [dragOverPosition, setDragOverPosition] = useState<DropPosition>();
   const [dragPreview, setDragPreview] = useState<ProfileOrganizationInput>();
   const gatewayOn = gateway.status === "running" || gateway.status === "starting";
-  const organization = dragPreview ?? profileOrganization(groups, profiles);
+  const baseOrganization = profileOrganization(groups, profiles);
+  const organization = dragPreview ?? baseOrganization;
   const groupById = new Map(groups.map((group) => [group.id, group]));
   const displayedGroups = [
     ...organization.groupIds.map((id) => groupById.get(id)).filter((group): group is ProfileGroup => Boolean(group)),
@@ -479,6 +480,12 @@ export function KeyringView({
     setDragPreview((current) => current && sameOrganization(current, next) ? current : next);
   }
 
+  function changedDragPreview(): ProfileOrganizationInput | undefined {
+    return dragPreview && !sameOrganization(dragPreview, baseOrganization)
+      ? dragPreview
+      : undefined;
+  }
+
   function commitDrag(next: ProfileOrganizationInput | undefined): void {
     if (next) onOrganize(next);
     clearDrag();
@@ -502,6 +509,10 @@ export function KeyringView({
     const sourceId = dragId;
     if (!sourceId) {
       clearDrag();
+      return;
+    }
+    if (sourceId === targetId) {
+      commitDrag(changedDragPreview());
       return;
     }
     const position = pointerDropPosition(event);
@@ -532,6 +543,10 @@ export function KeyringView({
     }
     if (!sourceGroupId) {
       clearDrag();
+      return;
+    }
+    if (sourceGroupId === targetGroupId) {
+      commitDrag(changedDragPreview());
       return;
     }
     commitDrag(organizeGroupDrop(
@@ -638,7 +653,12 @@ export function KeyringView({
                     data-flip-id={`group:${section.id ?? "ungrouped"}`}
                     onDragOver={(event) => {
                       if (!dragId && !dragGroupId) return;
-                      if (dragGroupId && section.id === dragGroupId) return;
+                      if (dragGroupId && section.id === dragGroupId) {
+                        if (!changedDragPreview()) return;
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                        return;
+                      }
                       event.preventDefault();
                       event.dataTransfer.dropEffect = "move";
                       const position = dragGroupId ? pointerDropPosition(event) : "after";
@@ -763,7 +783,13 @@ export function KeyringView({
                     event.dataTransfer.setData("text/plain", profile.id);
                   }}
                   onDragOver={(event) => {
-                    if (!dragId || dragId === profile.id) return;
+                    if (!dragId) return;
+                    if (dragId === profile.id) {
+                      if (!changedDragPreview()) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      return;
+                    }
                     event.preventDefault();
                     event.dataTransfer.dropEffect = "move";
                     const position = pointerDropPosition(event);
