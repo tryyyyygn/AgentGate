@@ -41,6 +41,7 @@ export interface AutoSwitchSettings {
 
 export interface Profile {
   id: string;
+  groupId?: string;
   name: string;
   protocol: Protocol;
   baseUrl: string;
@@ -75,6 +76,7 @@ export interface Profile {
 
 export interface SaveProfileInput {
   id?: string;
+  groupId?: string | null;
   name: string;
   protocol: Protocol;
   baseUrl: string;
@@ -85,6 +87,18 @@ export interface SaveProfileInput {
   targets: ClientTarget[];
   enableToolSearch?: boolean;
   autoSwitch: AutoSwitchSettings;
+}
+
+export interface ProfileGroup {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProfileOrganizationInput {
+  groupIds: string[];
+  profiles: Array<{ id: string; groupId: string | null }>;
 }
 
 export interface ClientStatus {
@@ -175,6 +189,75 @@ export interface AppSettings {
   theme: AppTheme;
   language: AppLanguage;
 }
+
+export type WalletTemplate = "sub2api" | "new-api" | "one-api";
+
+export type WalletBalanceStatus = "ok" | "low" | "empty" | "unlimited" | "error";
+export type WalletCredentialKind = "api-key" | "session";
+export type WalletCredentialStatus = "ready" | "missing" | "expired";
+
+export interface WalletSubscription {
+  id: number;
+  name: string;
+  dailyUsedUsd: number;
+  dailyLimitUsd?: number;
+  expiresAt?: string;
+  resetsAt?: string;
+}
+
+export interface WalletBalance {
+  status: WalletBalanceStatus;
+  scope?: "key" | "account" | "site";
+  remainingUsd?: number;
+  totalUsd?: number;
+  usedUsd?: number;
+  plan?: string;
+  expiresAt?: string;
+  subscriptions?: WalletSubscription[];
+  checkedAt: string;
+  message?: string;
+}
+
+export interface Wallet {
+  id: string;
+  name: string;
+  siteUrl: string;
+  template: WalletTemplate;
+  credentialKind: WalletCredentialKind;
+  credentialStatus: WalletCredentialStatus;
+  credentialHint?: string;
+  lowBalanceUsd: number;
+  createdAt: string;
+  updatedAt: string;
+  balance?: WalletBalance;
+}
+
+export interface SaveWalletInput {
+  id?: string;
+  name: string;
+  siteUrl: string;
+  template: WalletTemplate;
+  apiKey?: string;
+  lowBalanceUsd: number;
+}
+
+export interface WalletLoginResult {
+  cancelled: boolean;
+  wallet?: Wallet;
+}
+
+export type WalletKeyImportGroupMode = "existing" | "new";
+
+export type WalletKeyImportResult =
+  | { status: "group-conflict"; groupName: string }
+  | {
+      status: "complete";
+      groupId?: string;
+      groupName: string;
+      imported: number;
+      reused: number;
+      skipped: number;
+    };
 
 export type ActiveRequestState =
   | "connecting"
@@ -275,6 +358,8 @@ export type StateChangedEvent =
 
 export interface BootstrapData {
   profiles: Profile[];
+  /** 密钥分组；旧版 preload 可能暂未提供。 */
+  profileGroups?: ProfileGroup[];
   clients: ClientStatus[];
   history: HistoryEntry[];
   gateway: GatewayState;
@@ -389,6 +474,14 @@ export interface AgentGateBridge {
   duplicateProfile(id: string): Promise<Profile>;
   /** 按给定顺序持久化方案排序。旧版 preload 可能暂未提供。 */
   reorderProfiles?(ids: string[]): Promise<Profile[]>;
+  createProfileGroup(name: string, profileIds: string[]): Promise<ProfileGroup>;
+  renameProfileGroup(id: string, name: string): Promise<ProfileGroup>;
+  updateProfileGroupMembers(id: string, profileIds: string[]): Promise<Profile[]>;
+  deleteProfileGroup(id: string): Promise<{ ok: boolean }>;
+  organizeProfiles(input: ProfileOrganizationInput): Promise<{
+    groups: ProfileGroup[];
+    profiles: Profile[];
+  }>;
   /** 删除管理库中的方案，不修改客户端配置。 */
   deleteProfile(id: string): Promise<void>;
   /** 由主进程将方案 Key 写入系统剪贴板。 */
@@ -414,6 +507,18 @@ export interface AgentGateBridge {
   stopGateway(settings?: GatewayStopSettings): Promise<BootstrapData>;
   /** 更新应用行为设置。旧版 preload 可能暂未提供。 */
   updateSettings?(patch: Partial<AppSettings>): Promise<AppSettings | BootstrapData>;
+  /** 独立钱包列表；不读取方案或网关流量。 */
+  listWallets(): Promise<Wallet[]>;
+  /** 新建或更新独立钱包；编辑时空白 apiKey 保留现有密文。 */
+  saveWallet(input: SaveWalletInput): Promise<Wallet>;
+  /** 在隔离窗口登录 Sub2API，并导入可自动刷新的账户会话。 */
+  loginWallet(id: string): Promise<WalletLoginResult>;
+  /** 使用 Sub2API 登录会话读取账户 Key，并在主进程内加密导入方案。 */
+  importWalletKeys(id: string, groupMode?: WalletKeyImportGroupMode): Promise<WalletKeyImportResult>;
+  /** 删除独立钱包。 */
+  deleteWallet(id: string): Promise<{ ok: boolean }>;
+  /** 只调用模板余额接口并持久化结果。 */
+  checkWallet(id: string): Promise<Wallet>;
   /** 扫描本机 agent 的会话。不进 bootstrap——要翻上百个正文文件加两个 SQLite。 */
   listSessions?(): Promise<SessionListResult | AgentSession[]>;
   /** 读会话最后的若干条发言。limit=0 表示尽量多。 */

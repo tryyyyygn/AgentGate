@@ -45,6 +45,8 @@ const {
   defaultGatewayStore,
 } = require('./services/gateway-service.cjs')
 const { UpdateService } = require('./services/update-service.cjs')
+const { WalletService, WalletStoreSchema } = require('./services/wallet-service.cjs')
+const { WalletLoginService } = require('./services/wallet-login-service.cjs')
 const { migrateLegacyUserData } = require('./services/migration-service.cjs')
 const { CHANNELS, registerIpcHandlers } = require('./services/ipc.cjs')
 const { SessionService } = require('./services/session-service.cjs')
@@ -61,6 +63,7 @@ const GATEWAY_STORE_FILE = 'gateway.json'
 const GATEWAY_BASELINE_STORE_FILE = 'gateway-recovery.json'
 const SETTINGS_STORE_FILE = 'settings.json'
 const REQUEST_LOG_STORE_FILE = 'requests.json'
+const WALLET_STORE_FILE = 'wallets.json'
 const WINDOW_STATE_STORE_FILE = 'window-state.json'
 const BACKUP_DIRECTORY_NAME = 'backups'
 const WINDOW_OPTIONS = Object.freeze({
@@ -113,7 +116,7 @@ function createServices() {
   const profileStore = new JsonFileStore(
     path.join(dataDirectory, PROFILE_STORE_FILE),
     ProfileStoreSchema,
-    () => ({ version: 2, profiles: [] }),
+    () => ({ version: 3, groups: [], profiles: [] }),
   )
   const historyStore = new JsonFileStore(
     path.join(dataDirectory, HISTORY_STORE_FILE),
@@ -140,6 +143,11 @@ function createServices() {
     RequestLogStoreSchema,
     () => ({ version: 1, entries: [] }),
   )
+  const walletStore = new JsonFileStore(
+    path.join(dataDirectory, WALLET_STORE_FILE),
+    WalletStoreSchema,
+    () => ({ version: 1, wallets: [] }),
+  )
   const windowStateStore = new JsonFileStore(
     path.join(dataDirectory, WINDOW_STATE_STORE_FILE),
     WindowStateSchema,
@@ -147,6 +155,14 @@ function createServices() {
   )
   const vault = new Vault(safeStorage)
   const profileService = new ProfileService(profileStore, vault)
+  const walletService = new WalletService({ store: walletStore, vault, profileService })
+  const walletLoginService = new WalletLoginService({
+    BrowserWindow,
+    walletService,
+    getParentWindow: () => mainWindow,
+    iconPath: path.join(__dirname, '..', 'assets', 'icon.ico'),
+    openExternal: (url) => shell.openExternal(url),
+  })
   const requestMonitor = new RequestMonitorService({
     onChange: (event) => {
       if (!mainWindow || mainWindow.isDestroyed()) return
@@ -230,6 +246,8 @@ function createServices() {
 
   return {
     sessionService,
+    walletService,
+    walletLoginService,
     profileService,
     clientService,
     healthService,
@@ -496,6 +514,7 @@ app.on('before-quit', (event) => {
   quitBarrierPromise = (async () => {
     let cleanupStep = 'stop automatic switching'
     try {
+      services?.walletLoginService.closeAll()
       await services?.autoSwitchService.stopAndWait()
       cleanupStep = 'restore client configuration'
       await services?.applyService.stopGateway({ preserveResumeIntent: true })

@@ -23,6 +23,8 @@ const MAX_HEALTH_HISTORY = 30
 const MAX_HEALTH_TIMELINE = 60
 const TARGETS = Object.freeze(Object.values(TARGET))
 const PROTOCOLS = Object.freeze(Object.values(PROTOCOL))
+const EXISTING_PROFILE_GROUP_ID = '00000000-0000-4000-8000-000000000001'
+const MIGRATED_GROUP_TIMESTAMP = '1970-01-01T00:00:00.000Z'
 
 const TargetSchema = z.enum(TARGETS)
 const ProtocolSchema = z.enum(PROTOCOLS)
@@ -135,6 +137,7 @@ const ProfileConnectionSchema = z.object({
 
 const SaveProfileSchema = z.object({
   id: z.string().uuid().optional(),
+  groupId: z.string().uuid().nullable().optional(),
   name: z.string().trim().min(1, 'Name is required').max(80),
   protocol: ProtocolSchema,
   baseUrl: HttpUrlSchema,
@@ -201,6 +204,7 @@ const LegacyStoredProfileSchema = z.object({
 })
 
 const StoredProfileSchema = LegacyStoredProfileSchema.extend({
+  groupId: z.string().uuid().optional(),
   endpoints: z.array(StoredEndpointSchema).min(1).max(MAX_PROFILE_ENDPOINTS),
   autoSwitch: AutoSwitchSettingsSchema,
   connectionRevision: z.number().int().positive(),
@@ -219,16 +223,46 @@ const LegacyProfileStoreSchema = z.object({
   profiles: z.array(LegacyStoredProfileSchema),
 })
 
-const CurrentProfileStoreSchema = z.object({
+const ProfileGroupSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1).max(80),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+})
+
+const VersionTwoProfileStoreSchema = z.object({
   version: z.literal(2),
   profiles: z.array(StoredProfileSchema),
 })
 
+const CurrentProfileStoreSchema = z.object({
+  version: z.literal(3),
+  groups: z.array(ProfileGroupSchema).max(500),
+  profiles: z.array(StoredProfileSchema),
+})
+
+function migrateProfilesToGroups(profiles) {
+  if (profiles.length === 0) return { version: 3, groups: [], profiles }
+  return {
+    version: 3,
+    groups: [{
+      id: EXISTING_PROFILE_GROUP_ID,
+      name: '现有密钥',
+      createdAt: MIGRATED_GROUP_TIMESTAMP,
+      updatedAt: MIGRATED_GROUP_TIMESTAMP,
+    }],
+    profiles: profiles.map((profile) => ({
+      ...profile,
+      groupId: EXISTING_PROFILE_GROUP_ID,
+    })),
+  }
+}
+
 const ProfileStoreSchema = z.union([
   CurrentProfileStoreSchema,
-  LegacyProfileStoreSchema.transform((store) => ({
-    version: 2,
-    profiles: store.profiles.map((profile) => ({
+  VersionTwoProfileStoreSchema.transform((store) => migrateProfilesToGroups(store.profiles)),
+  LegacyProfileStoreSchema.transform((store) => migrateProfilesToGroups(
+    store.profiles.map((profile) => ({
       ...profile,
       endpoints: [{
         url: profile.baseUrl,
@@ -243,7 +277,7 @@ const ProfileStoreSchema = z.union([
       },
       connectionRevision: 1,
     })),
-  })),
+  )),
 ])
 
 const HistoryChangeSchema = z.object({
@@ -384,6 +418,7 @@ module.exports = {
   normalizeHttpUrl,
   SaveProfileSchema,
   StoredProfileSchema,
+  ProfileGroupSchema,
   ProfileStoreSchema,
   HistoryEntrySchema,
   HistoryStoreSchema,

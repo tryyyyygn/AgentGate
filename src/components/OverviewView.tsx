@@ -110,6 +110,7 @@ function PickerMenu({ label, children }: { label: string; children: ReactNode })
 }
 
 interface OverviewViewProps {
+  active?: boolean;
   profiles: Profile[];
   clients: ClientStatus[];
   gateway: GatewayState;
@@ -132,6 +133,7 @@ interface OverviewViewProps {
  * （缓存率），右边「用了多少」（累计 Token）。
  */
 export function OverviewView({
+  active = true,
   profiles,
   clients,
   gateway,
@@ -152,7 +154,7 @@ export function OverviewView({
   useEffect(() => () => window.clearTimeout(flashTimer.current), []);
 
   useEffect(() => {
-    if (!pickerFor) return undefined;
+    if (!active || !pickerFor) return undefined;
     function handleKey(event: KeyboardEvent): void {
       if (event.key !== "Escape") return;
       event.stopPropagation();
@@ -160,7 +162,7 @@ export function OverviewView({
     }
     window.addEventListener("keydown", handleKey, true);
     return () => window.removeEventListener("keydown", handleKey, true);
-  }, [pickerFor]);
+  }, [active, pickerFor]);
 
   function healthTag(profile: Profile): { text: string; className: string } {
     const status = profile.health?.status ?? "unknown";
@@ -205,8 +207,8 @@ export function OverviewView({
     : m.overview.idle;
 
   return (
-    <main className="page-scroll" aria-label={m.nav.overview}>
-      {pickerFor && (
+    <main className="page-scroll" aria-label={m.nav.overview} hidden={!active}>
+      {active && pickerFor && (
         <button
           type="button"
           className="overlay-scrim"
@@ -298,7 +300,7 @@ export function OverviewView({
                 ? profiles.find((item) => item.id === route.profileId)
                 : undefined;
               const options = profiles.filter((item) => item.targets.includes(target));
-              const open = pickerFor === target;
+              const open = active && pickerFor === target;
               const cardClass = [
                 "socket-card",
                 `tone-${CLIENT_META[target].tone}`,

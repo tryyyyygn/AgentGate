@@ -8,6 +8,8 @@ coverage/
 .smoke/
 .test-runtime/
 test-artifacts/
+.agentgate-wallet-*/
+agentgate-test-data/
 .ruff_cache/
 *.log
 .DS_Store

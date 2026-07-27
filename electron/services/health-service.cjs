@@ -27,8 +27,10 @@ function healthUrl(profile, baseUrl = profile.baseUrl) {
   if (!path.endsWith('/models')) {
     if (profile.protocol === PROTOCOL.GEMINI) {
       url.pathname = path.endsWith('/v1beta') ? `${path}/models` : `${path}/v1beta/models`
-    } else {
+    } else if (profile.protocol === PROTOCOL.ANTHROPIC) {
       url.pathname = path.endsWith('/v1') ? `${path}/models` : `${path}/v1/models`
+    } else {
+      url.pathname = `${path}/models`
     }
   }
   url.hash = ''

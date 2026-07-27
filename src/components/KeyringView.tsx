@@ -1,10 +1,14 @@
 import {
   AlertCircle,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Copy,
   CopyPlus,
+  Folder,
+  FolderPlus,
   Gauge,
+  GripVertical,
   KeyRound,
   LoaderCircle,
   Pencil,
@@ -12,10 +16,11 @@ import {
   RefreshCw,
   Send,
   Trash2,
+  X,
   Zap,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { DragEvent as ReactDragEvent, ReactElement } from "react";
+import type { DragEvent as ReactDragEvent, FormEvent, ReactElement } from "react";
 import { CLIENT_META, PROTOCOL_META } from "../config";
 import { useI18n } from "../i18n";
 import type { Messages } from "../i18n";
@@ -24,16 +29,116 @@ import { RollingNumber } from "./RollingNumber";
 import type { EndpointMetrics } from "../lib/health";
 import { formatTokenCount, relativeTime } from "../lib/format";
 import { useFlipList } from "../lib/useFlipList";
-import type { ClientTarget, GatewayState, Profile, ProfileEndpoint } from "../types";
+import type {
+  ClientTarget,
+  GatewayState,
+  Profile,
+  ProfileEndpoint,
+  ProfileGroup,
+  ProfileOrganizationInput,
+} from "../types";
 import type { BusyAction } from "../ui-types";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 const BAR_FILL = {
   healthy: "var(--good)",
   limited: "var(--warn)",
   failed: "var(--bad)",
 } as const;
+const UNGROUPED_SECTION_KEY = "__ungrouped__";
 
 const MAX_BARS = 24;
+
+export type DropPosition = "before" | "after";
+
+function profileOrganization(
+  groups: readonly ProfileGroup[],
+  profiles: readonly Profile[],
+): ProfileOrganizationInput {
+  const knownGroupIds = new Set(groups.map((group) => group.id));
+  return {
+    groupIds: groups.map((group) => group.id),
+    profiles: profiles.map((profile) => ({
+      id: profile.id,
+      groupId: profile.groupId && knownGroupIds.has(profile.groupId) ? profile.groupId : null,
+    })),
+  };
+}
+
+function sameOrganization(left: ProfileOrganizationInput, right: ProfileOrganizationInput): boolean {
+  return left.groupIds.length === right.groupIds.length
+    && left.profiles.length === right.profiles.length
+    && left.groupIds.every((id, index) => id === right.groupIds[index])
+    && left.profiles.every((profile, index) => (
+      profile.id === right.profiles[index]?.id && profile.groupId === right.profiles[index]?.groupId
+    ));
+}
+
+/** 生成拖动一把密钥后的完整预览；下半区表示插到目标之后。 */
+export function organizeProfileDrop(
+  groups: readonly ProfileGroup[],
+  profiles: readonly Profile[],
+  sourceId: string,
+  targetGroupId: string | null,
+  targetId: string | undefined,
+  position: DropPosition,
+): ProfileOrganizationInput | undefined {
+  const knownGroupIds = new Set(groups.map((group) => group.id));
+  if (targetGroupId && !knownGroupIds.has(targetGroupId)) return undefined;
+  const source = profiles.find((profile) => profile.id === sourceId);
+  if (!source || sourceId === targetId) return undefined;
+
+  const buckets = new Map<string | null, Profile[]>();
+  for (const group of groups) buckets.set(group.id, []);
+  buckets.set(null, []);
+  for (const profile of profiles) {
+    if (profile.id === sourceId) continue;
+    const groupId = profile.groupId && knownGroupIds.has(profile.groupId) ? profile.groupId : null;
+    buckets.get(groupId)?.push(profile);
+  }
+
+  const target = buckets.get(targetGroupId);
+  if (!target) return undefined;
+  const targetIndex = targetId ? target.findIndex((profile) => profile.id === targetId) : target.length;
+  if (targetIndex < 0) return undefined;
+  target.splice(targetIndex + (targetId && position === "after" ? 1 : 0), 0, source);
+
+  const ordered = [
+    ...groups.flatMap((group) => buckets.get(group.id) ?? []),
+    ...(buckets.get(null) ?? []),
+  ];
+  return {
+    groupIds: groups.map((group) => group.id),
+    profiles: ordered.map((profile) => ({
+      id: profile.id,
+      groupId: profile.id === sourceId
+        ? targetGroupId
+        : profile.groupId && knownGroupIds.has(profile.groupId) ? profile.groupId : null,
+    })),
+  };
+}
+
+/** 生成拖动一个分组后的完整预览；未分组区是末尾落点。 */
+export function organizeGroupDrop(
+  groups: readonly ProfileGroup[],
+  profiles: readonly Profile[],
+  sourceGroupId: string,
+  targetGroupId: string | null,
+  position: DropPosition,
+): ProfileOrganizationInput | undefined {
+  if (!groups.some((group) => group.id === sourceGroupId)) return undefined;
+  if (targetGroupId && !groups.some((group) => group.id === targetGroupId)) return undefined;
+  if (sourceGroupId === targetGroupId) return undefined;
+
+  const groupIds = groups.map((group) => group.id).filter((id) => id !== sourceGroupId);
+  const targetIndex = targetGroupId ? groupIds.indexOf(targetGroupId) : groupIds.length;
+  if (targetIndex < 0) return undefined;
+  groupIds.splice(targetIndex + (targetGroupId && position === "after" ? 1 : 0), 0, sourceGroupId);
+  return {
+    ...profileOrganization(groups, profiles),
+    groupIds,
+  };
+}
 
 /** 并列项分隔符：中日用顿号，英文用逗号。 */
 const LIST_SEPARATOR: Record<string, string> = { zh: "、", "zh-TW": "、", ja: "、", en: ", " };
@@ -121,6 +226,7 @@ function endpointLatency(endpoint: ProfileEndpoint, m: Messages): string {
 
 interface KeyringViewProps {
   profiles: Profile[];
+  groups?: ProfileGroup[];
   gateway: GatewayState;
   busy: BusyAction | null;
   busyId?: string;
@@ -138,9 +244,103 @@ interface KeyringViewProps {
   onDiscoverModels: (id: string) => void;
   onProbe: (id: string) => void;
   onCopyKey: (profile: Profile) => void;
-  onReorder: (ids: string[]) => void;
+  onSaveGroup: (
+    group: ProfileGroup | undefined,
+    name: string,
+    profileIds: string[],
+  ) => Promise<boolean>;
+  onDeleteGroup: (group: ProfileGroup) => Promise<boolean>;
+  onOrganize: (input: ProfileOrganizationInput) => void;
   onRetry: () => void;
   active?: boolean;
+}
+
+interface GroupEditorProps {
+  group?: ProfileGroup;
+  profiles: Profile[];
+  busy: boolean;
+  onSave: (group: ProfileGroup | undefined, name: string, profileIds: string[]) => Promise<boolean>;
+  onClose: () => void;
+}
+
+function GroupEditor({ group, profiles, busy, onSave, onClose }: GroupEditorProps): ReactElement {
+  const { m } = useI18n();
+  const [name, setName] = useState(group?.name ?? "");
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set(
+    group ? profiles.filter((profile) => profile.groupId === group.id).map((profile) => profile.id) : [],
+  ));
+
+  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const saved = await onSave(group, name.trim(), [...selectedIds]);
+    if (saved) onClose();
+  }
+
+  function toggle(id: string): void {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  return (
+    <div className="editor-layer" role="dialog" aria-modal="true" aria-label={m.keys.groupName}>
+      <button
+        type="button"
+        className="editor-scrim"
+        aria-label={m.editor.close}
+        disabled={busy}
+        onClick={onClose}
+      />
+      <form className="editor-dialog key-group-editor" onSubmit={(event) => void submit(event)}>
+        <header className="editor-head">
+          <h2>{group ? m.keys.renameGroup : m.keys.createGroup}</h2>
+          <button type="button" className="editor-close" aria-label={m.editor.close} onClick={onClose}>
+            <X size={15} />
+          </button>
+        </header>
+        <div className="editor-body">
+          <label className="field-block">
+            <span className="field-name">{m.keys.groupName}</span>
+            <input
+              value={name}
+              required
+              maxLength={80}
+              autoFocus
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+          <div className="key-group-members">
+            <span className="field-name">{m.keys.groupMembers}</span>
+            {profiles.length === 0 ? (
+              <p>{m.keys.groupNoKeys}</p>
+            ) : profiles.map((profile) => (
+              <label key={profile.id}>
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(profile.id)}
+                  onChange={() => toggle(profile.id)}
+                />
+                <span>{profile.name}</span>
+                <code>{PROTOCOL_META[profile.protocol].short}</code>
+              </label>
+            ))}
+          </div>
+        </div>
+        <footer className="editor-foot">
+          <button type="button" className="btn-ghost" disabled={busy} onClick={onClose}>
+            {m.editor.cancel}
+          </button>
+          <button type="submit" className="btn-primary" disabled={busy || !name.trim()}>
+            {busy && <LoaderCircle size={13} className="spin" />}
+            {busy ? m.editor.saving : m.editor.save}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
 }
 
 /**
@@ -151,6 +351,7 @@ interface KeyringViewProps {
  */
 export function KeyringView({
   profiles,
+  groups = [],
   gateway,
   busy,
   busyId,
@@ -167,19 +368,83 @@ export function KeyringView({
   onDiscoverModels,
   onProbe,
   onCopyKey,
-  onReorder,
+  onSaveGroup,
+  onDeleteGroup,
+  onOrganize,
   onRetry,
   active = true,
 }: KeyringViewProps): ReactElement {
   const { locale, m, fill } = useI18n();
   const [expandedId, setExpandedId] = useState<string>();
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(() => new Set());
+  const [groupEditor, setGroupEditor] = useState<ProfileGroup | null>();
+  const [pendingDeleteGroup, setPendingDeleteGroup] = useState<ProfileGroup>();
   const [dragId, setDragId] = useState<string>();
+  const [dragGroupId, setDragGroupId] = useState<string>();
   const [dragOverId, setDragOverId] = useState<string>();
+  const [dragOverGroupId, setDragOverGroupId] = useState<string | null>();
+  const [dragOverPosition, setDragOverPosition] = useState<DropPosition>();
+  const [dragPreview, setDragPreview] = useState<ProfileOrganizationInput>();
   const gatewayOn = gateway.status === "running" || gateway.status === "starting";
-  const listRef = useFlipList(profiles.map((profile) => profile.id));
+  const organization = dragPreview ?? profileOrganization(groups, profiles);
+  const groupById = new Map(groups.map((group) => [group.id, group]));
+  const displayedGroups = [
+    ...organization.groupIds.map((id) => groupById.get(id)).filter((group): group is ProfileGroup => Boolean(group)),
+    ...groups.filter((group) => !organization.groupIds.includes(group.id)),
+  ];
+  const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+  const displayedProfiles = [
+    ...organization.profiles
+      .map(({ id }) => profileById.get(id))
+      .filter((profile): profile is Profile => Boolean(profile)),
+    ...profiles.filter((profile) => !organization.profiles.some(({ id }) => id === profile.id)),
+  ];
+  const previewGroupByProfileId = new Map(organization.profiles.map((profile) => [
+    profile.id,
+    profile.groupId,
+  ]));
+  const knownGroupIds = new Set(displayedGroups.map((group) => group.id));
+  const displayedGroupId = (profile: Profile): string | null => (
+    previewGroupByProfileId.has(profile.id)
+      ? previewGroupByProfileId.get(profile.id) ?? null
+      : profile.groupId && knownGroupIds.has(profile.groupId) ? profile.groupId : null
+  );
+  const sections = [
+    ...displayedGroups.map((group) => ({
+      id: group.id as string | null,
+      group,
+      name: group.name,
+      profiles: displayedProfiles.filter((profile) => displayedGroupId(profile) === group.id),
+    })),
+    ...(() => {
+      const ungrouped = displayedProfiles.filter((profile) => displayedGroupId(profile) === null);
+      return ungrouped.length > 0 ? [{
+        id: null,
+        group: undefined,
+        name: m.keys.ungrouped,
+        profiles: ungrouped,
+      }] : [];
+    })(),
+  ];
+  const listItems = sections.flatMap((section) => {
+    const sectionKey = section.id ?? UNGROUPED_SECTION_KEY;
+    const collapsed = collapsedGroupIds.has(sectionKey);
+    return [
+      { kind: "group" as const, section, sectionKey, collapsed },
+      ...(collapsed ? [] : section.profiles.map((profile) => ({
+        kind: "profile" as const,
+        profile,
+        groupId: section.id,
+        profileIndex: displayedProfiles.indexOf(profile),
+      }))),
+    ];
+  });
+  const listRef = useFlipList(listItems.map((item) => item.kind === "group"
+    ? `group:${item.section.id ?? "ungrouped"}`
+    : item.profile.id));
 
   useEffect(() => {
-    if (!expandedId) return undefined;
+    if (!active || !expandedId) return undefined;
     function handleKey(event: KeyboardEvent): void {
       if (event.key !== "Escape") return;
       event.stopPropagation();
@@ -187,7 +452,7 @@ export function KeyringView({
     }
     window.addEventListener("keydown", handleKey, true);
     return () => window.removeEventListener("keydown", handleKey, true);
-  }, [expandedId]);
+  }, [active, expandedId]);
 
   useEffect(() => {
     setExpandedId((current) => current && profiles.some((profile) => profile.id === current)
@@ -195,22 +460,102 @@ export function KeyringView({
       : undefined);
   }, [profiles]);
 
-  function handleDrop(event: ReactDragEvent<HTMLElement>, targetId: string): void {
+  function clearDrag(): void {
+    setDragId(undefined);
+    setDragGroupId(undefined);
+    setDragOverId(undefined);
+    setDragOverGroupId(undefined);
+    setDragOverPosition(undefined);
+    setDragPreview(undefined);
+  }
+
+  function pointerDropPosition(event: ReactDragEvent<HTMLElement>): DropPosition {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return event.clientY >= bounds.top + bounds.height / 2 ? "after" : "before";
+  }
+
+  function showDragPreview(next: ProfileOrganizationInput | undefined): void {
+    if (!next) return;
+    setDragPreview((current) => current && sameOrganization(current, next) ? current : next);
+  }
+
+  function commitDrag(next: ProfileOrganizationInput | undefined): void {
+    if (next) onOrganize(next);
+    clearDrag();
+  }
+
+  function toggleGroup(sectionKey: string): void {
+    setCollapsedGroupIds((current) => {
+      const next = new Set(current);
+      if (next.has(sectionKey)) next.delete(sectionKey);
+      else next.add(sectionKey);
+      return next;
+    });
+  }
+
+  function handleProfileDrop(
+    event: ReactDragEvent<HTMLElement>,
+    targetId: string,
+    targetGroupId: string | null,
+  ): void {
     event.preventDefault();
     const sourceId = dragId;
-    setDragId(undefined);
-    setDragOverId(undefined);
-    if (!sourceId || sourceId === targetId) return;
-    const ids = profiles.map((profile) => profile.id).filter((id) => id !== sourceId);
-    const insertAt = ids.indexOf(targetId);
-    if (insertAt === -1) return;
-    ids.splice(insertAt, 0, sourceId);
-    onReorder(ids);
+    if (!sourceId) {
+      clearDrag();
+      return;
+    }
+    const position = pointerDropPosition(event);
+    commitDrag(organizeProfileDrop(
+      groups,
+      profiles,
+      sourceId,
+      targetGroupId,
+      targetId,
+      position,
+    ));
+  }
+
+  function handleGroupDrop(event: ReactDragEvent<HTMLElement>, targetGroupId: string | null): void {
+    event.preventDefault();
+    const sourceProfileId = dragId;
+    const sourceGroupId = dragGroupId;
+    if (sourceProfileId) {
+      commitDrag(organizeProfileDrop(
+        groups,
+        profiles,
+        sourceProfileId,
+        targetGroupId,
+        undefined,
+        "after",
+      ));
+      return;
+    }
+    if (!sourceGroupId) {
+      clearDrag();
+      return;
+    }
+    commitDrag(organizeGroupDrop(
+      groups,
+      profiles,
+      sourceGroupId,
+      targetGroupId,
+      pointerDropPosition(event),
+    ));
   }
 
   async function handleDuplicate(profile: Profile): Promise<void> {
     const duplicate = await onDuplicate(profile);
-    if (duplicate) setExpandedId(duplicate.id);
+    if (!duplicate) return;
+    const sectionKey = duplicate.groupId && knownGroupIds.has(duplicate.groupId)
+      ? duplicate.groupId
+      : UNGROUPED_SECTION_KEY;
+    setCollapsedGroupIds((current) => {
+      if (!current.has(sectionKey)) return current;
+      const next = new Set(current);
+      next.delete(sectionKey);
+      return next;
+    });
+    setExpandedId(duplicate.id);
   }
 
   return (
@@ -231,6 +576,14 @@ export function KeyringView({
               ? <LoaderCircle size={13} className="spin" />
               : <Gauge size={13} />}
             {m.keys.testAll}
+          </button>
+          <button
+            type="button"
+            className="ghost-pill"
+            disabled={Boolean(busy)}
+            onClick={() => setGroupEditor(null)}
+          >
+            <FolderPlus size={13} />{m.keys.createGroup}
           </button>
           <button
             type="button"
@@ -268,7 +621,110 @@ export function KeyringView({
           </div>
         ) : (
           <div className="keyring-list" ref={listRef}>
-            {profiles.map((profile, index) => {
+            {listItems.map((item) => {
+              if (item.kind === "group") {
+                const { section, sectionKey, collapsed } = item;
+                const groupBusy = busy === "group" && busyId === section.group?.id;
+                const dropActive = dragOverGroupId === section.id;
+                const groupClass = [
+                  "keyring-group-head",
+                  dragGroupId === section.id ? "dragging" : "",
+                  dropActive ? `drag-over drop-${dragOverPosition ?? "before"}` : "",
+                ].filter(Boolean).join(" ");
+                return (
+                  <div
+                    className={groupClass}
+                    key={`group:${section.id ?? "ungrouped"}`}
+                    data-flip-id={`group:${section.id ?? "ungrouped"}`}
+                    onDragOver={(event) => {
+                      if (!dragId && !dragGroupId) return;
+                      if (dragGroupId && section.id === dragGroupId) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      const position = dragGroupId ? pointerDropPosition(event) : "after";
+                      setDragOverGroupId(section.id);
+                      setDragOverId(undefined);
+                      setDragOverPosition(position);
+                      showDragPreview(dragId
+                        ? organizeProfileDrop(
+                            groups,
+                            profiles,
+                            dragId,
+                            section.id,
+                            undefined,
+                            "after",
+                          )
+                        : dragGroupId
+                          ? organizeGroupDrop(groups, profiles, dragGroupId, section.id, position)
+                          : undefined);
+                    }}
+                    onDragLeave={() => {
+                      setDragOverGroupId((current) => current === section.id ? undefined : current);
+                      setDragOverPosition(undefined);
+                    }}
+                    onDrop={(event) => handleGroupDrop(event, section.id)}
+                  >
+                    {section.group ? (
+                      <span
+                        className="keyring-group-grip"
+                        draggable={!busy}
+                        aria-label={m.keys.moveGroup}
+                        onDragStart={(event) => {
+                          setDragId(undefined);
+                          setDragGroupId(section.group!.id);
+                          setDragPreview(profileOrganization(groups, profiles));
+                          setDragOverId(undefined);
+                          setDragOverGroupId(undefined);
+                          setDragOverPosition(undefined);
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", section.group!.id);
+                        }}
+                        onDragEnd={clearDrag}
+                      >
+                        <GripVertical size={13} />
+                      </span>
+                    ) : <span className="keyring-group-grip fixed" />}
+                    <button
+                      type="button"
+                      className="keyring-group-toggle"
+                      aria-expanded={!collapsed}
+                      aria-label={fill(collapsed ? m.keys.expandGroup : m.keys.collapseGroup, { name: section.name })}
+                      data-hint={fill(collapsed ? m.keys.expandGroup : m.keys.collapseGroup, { name: section.name })}
+                      onClick={() => toggleGroup(sectionKey)}
+                    >
+                      {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                      <Folder size={14} />
+                      <strong>{section.name}</strong>
+                      <small>{fill(m.keys.groupCount, { count: section.profiles.length })}</small>
+                    </button>
+                    {section.group && (
+                      <span className="keyring-group-tools">
+                        <button
+                          type="button"
+                          className="icon-ghost"
+                          aria-label={`${m.keys.renameGroup} ${section.name}`}
+                          data-hint={m.keys.renameGroup}
+                          disabled={Boolean(busy)}
+                          onClick={() => setGroupEditor(section.group!)}
+                        >
+                          {groupBusy ? <LoaderCircle size={13} className="spin" /> : <Pencil size={13} />}
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-ghost wallet-delete"
+                          aria-label={`${m.keys.deleteGroup} ${section.name}`}
+                          data-hint={m.keys.deleteGroup}
+                          disabled={Boolean(busy)}
+                          onClick={() => setPendingDeleteGroup(section.group!)}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                );
+              }
+              const { profile, groupId, profileIndex: index } = item;
               const expanded = expandedId === profile.id;
               const inUse = gateway.routes.some((route) => route.profileId === profile.id);
               const tone = PROTOCOL_META[profile.protocol].tone;
@@ -286,17 +742,23 @@ export function KeyringView({
               const rowClass = [
                 "keyring-row",
                 dragId === profile.id ? "dragging" : "",
-                dragOverId === profile.id && dragId !== profile.id ? "drag-over" : "",
+                dragOverId === profile.id && dragId !== profile.id
+                  ? `drag-over drop-${dragOverPosition ?? "before"}`
+                  : "",
               ].filter(Boolean).join(" ");
               return (
                 <article
                   className={rowClass}
                   key={profile.id}
                   data-flip-id={profile.id}
-                  style={{ animationDelay: `${60 + index * 50}ms` }}
                   draggable={!busy}
                   onDragStart={(event) => {
                     setDragId(profile.id);
+                    setDragGroupId(undefined);
+                    setDragPreview(profileOrganization(groups, profiles));
+                    setDragOverId(undefined);
+                    setDragOverGroupId(undefined);
+                    setDragOverPosition(undefined);
                     event.dataTransfer.effectAllowed = "move";
                     event.dataTransfer.setData("text/plain", profile.id);
                   }}
@@ -304,16 +766,25 @@ export function KeyringView({
                     if (!dragId || dragId === profile.id) return;
                     event.preventDefault();
                     event.dataTransfer.dropEffect = "move";
+                    const position = pointerDropPosition(event);
                     setDragOverId(profile.id);
+                    setDragOverGroupId(undefined);
+                    setDragOverPosition(position);
+                    showDragPreview(organizeProfileDrop(
+                      groups,
+                      profiles,
+                      dragId,
+                      groupId,
+                      profile.id,
+                      position,
+                    ));
                   }}
                   onDragLeave={() => {
                     setDragOverId((current) => current === profile.id ? undefined : current);
+                    setDragOverPosition(undefined);
                   }}
-                  onDrop={(event) => handleDrop(event, profile.id)}
-                  onDragEnd={() => {
-                    setDragId(undefined);
-                    setDragOverId(undefined);
-                  }}
+                  onDrop={(event) => handleProfileDrop(event, profile.id, groupId)}
+                  onDragEnd={clearDrag}
                 >
                   <div className="keyring-head">
                     <button
@@ -565,6 +1036,32 @@ export function KeyringView({
           </div>
         )}
       </div>
+
+      {groupEditor !== undefined && (
+        <GroupEditor
+          group={groupEditor ?? undefined}
+          profiles={profiles}
+          busy={busy === "group"}
+          onSave={onSaveGroup}
+          onClose={() => setGroupEditor(undefined)}
+        />
+      )}
+
+      {pendingDeleteGroup && (
+        <ConfirmDialog
+          title={fill(m.keys.deleteGroupTitle, { name: pendingDeleteGroup.name })}
+          message={m.keys.deleteGroupMessage}
+          confirmLabel={m.keys.deleteGroup}
+          cancelLabel={m.confirm.cancel}
+          danger
+          onConfirm={() => {
+            const group = pendingDeleteGroup;
+            setPendingDeleteGroup(undefined);
+            void onDeleteGroup(group);
+          }}
+          onCancel={() => setPendingDeleteGroup(undefined)}
+        />
+      )}
     </main>
   );
 }

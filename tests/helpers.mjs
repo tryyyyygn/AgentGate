@@ -36,7 +36,7 @@ export function createTestStores(root) {
     profileStore: new JsonFileStore(
       path.join(dataDirectory, "profiles.json"),
       ProfileStoreSchema,
-      () => ({ version: 2, profiles: [] }),
+      () => ({ version: 3, groups: [], profiles: [] }),
     ),
     historyStore: new JsonFileStore(
       path.join(dataDirectory, "history.json"),

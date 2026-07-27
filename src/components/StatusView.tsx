@@ -15,12 +15,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { useI18n } from "../i18n";
 import { api } from "../lib/api";
-import { describeError, formatDuration, relativeTime } from "../lib/format";
+import { describeError, formatCompactDateTime, formatDuration } from "../lib/format";
 import type { Profile, ProbeResult } from "../types";
 
 const DEFAULT_INTERVAL_MS = 120_000;
 const MAX_SAMPLES = 60;
-const PULSE_SLOTS = 24;
+const PULSE_SLOTS = 30;
 const HEALTHY_RESPONSE_MS = 5_000;
 const SMOOTH_RESPONSE_MS = 10_000;
 const DISABLED_PROFILES_KEY = "agentgate.status.disabled-profiles.v1";
@@ -100,6 +100,10 @@ export async function probeProfilesTogether<T extends { id: string }>(
     onSettled?.(item);
     return item;
   }));
+}
+
+export function visibleProbeSamples(samples: ReadonlyArray<ProbeResult>): ProbeResult[] {
+  return samples.slice(-PULSE_SLOTS);
 }
 
 function isProbeResult(value: unknown): value is ProbeResult {
@@ -208,7 +212,7 @@ function persistProbeRecords(records: Readonly<Record<string, ProbeRecord>>): vo
 }
 
 function ProbePulse({ samples, label }: { samples: ReadonlyArray<ProbeResult>; label: string }): ReactElement {
-  const visible = samples.slice(-PULSE_SLOTS);
+  const visible = visibleProbeSamples(samples);
   const slots: Array<ProbeResult | undefined> = [
     ...Array.from({ length: PULSE_SLOTS - visible.length }, () => undefined),
     ...visible,
@@ -371,12 +375,12 @@ export function StatusView({
   }, [auto, intervalMs, probeAll]);
 
   useEffect(() => {
-    if (!auto) return undefined;
+    if (!active || !auto) return undefined;
     const tick = () => setClockMs(Date.now());
     tick();
     const timer = window.setInterval(tick, 1_000);
     return () => window.clearInterval(timer);
-  }, [auto]);
+  }, [active, auto]);
 
   useEffect(() => {
     if (profiles.length === 0 || profilesWereAvailableRef.current) return;
@@ -528,11 +532,8 @@ export function StatusView({
               const modelOptions = [...new Set([selectedModel, ...probeModelOptions(profile)])]
                 .filter(Boolean)
                 .filter((option) => option !== defaultModel || option === selectedModel);
-              const hourlySamples = record.samples.filter((sample) => {
-                const checkedAt = Date.parse(sample.checkedAt);
-                return Number.isFinite(checkedAt) && checkedAt >= Date.now() - 60 * 60_000;
-              });
-              const availabilityValue = probeAvailability(hourlySamples);
+              const historySamples = visibleProbeSamples(record.samples);
+              const availabilityValue = probeAvailability(historySamples);
               const lastCheck = record.result?.checkedAt;
               const applying = busyId === profile.id;
               const monitoringHint = fill(
@@ -599,11 +600,10 @@ export function StatusView({
 
                   <span className={`status-row-availability ${state}`} role="cell">
                     <strong>{availabilityValue === undefined ? "———" : `${availabilityValue}%`}</strong>
-                    <small>{fill(m.status.sampleCount, { count: hourlySamples.length })}</small>
                   </span>
 
                   <div className="status-row-history" role="cell">
-                    <ProbePulse samples={record.samples} label={`${profile.name} ${m.status.availability}`} />
+                    <ProbePulse samples={historySamples} label={`${profile.name} ${m.status.availability}`} />
                   </div>
 
                   <span className="status-row-last" role="cell" title={record.error}>
@@ -612,7 +612,7 @@ export function StatusView({
                       : record.checking
                         ? m.status.checking
                         : record.error || (lastCheck
-                          ? relativeTime(lastCheck, locale, m.status.noSamples)
+                          ? formatCompactDateTime(lastCheck)
                           : m.status.noSamples)}
                   </span>
 

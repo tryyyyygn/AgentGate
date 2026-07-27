@@ -148,7 +148,7 @@ describe("方案服务", () => {
       enableToolSearch: migrated.enableToolSearch,
       autoSwitch: migrated.autoSwitch,
     });
-    expect(JSON.parse(await fs.readFile(profilePath, "utf8")).version).toBe(2);
+    expect(JSON.parse(await fs.readFile(profilePath, "utf8")).version).toBe(3);
   });
 
   it("在主进程内复制方案和 Key，并重置运行时状态", async () => {
@@ -230,6 +230,160 @@ describe("方案服务", () => {
       authMode: saved.authMode,
       targets: saved.targets,
     })).rejects.toThrow("cannot contain credentials or fragments");
+  });
+});
+
+describe("密钥分组", () => {
+  it("把生产版 v2 数据迁移到现有密钥分组且不改变密钥", async () => {
+    const profilePath = path.join(root, "data", "profiles.json");
+    const createdAt = new Date().toISOString();
+    await fs.mkdir(path.dirname(profilePath), { recursive: true });
+    await fs.writeFile(profilePath, `${JSON.stringify({
+      version: 2,
+      profiles: [{
+        id: "00000000-0000-4000-8000-000000000201",
+        name: "生产版方案",
+        protocol: "openai-responses",
+        baseUrl: "https://relay.example/v1",
+        endpoints: [{
+          url: "https://relay.example/v1",
+          models: [],
+          healthHistory: [],
+          healthTimeline: [],
+        }],
+        model: "gpt-5.6",
+        authMode: "bearer",
+        targets: ["codex"],
+        enableToolSearch: false,
+        autoSwitch: { enabled: false, intervalMinutes: 2 },
+        connectionRevision: 1,
+        keyHint: "****cret",
+        encryptedKey: testVault.encrypt("sk-production-secret"),
+        createdAt,
+        updatedAt: createdAt,
+      }],
+    }, null, 2)}\n`, "utf8");
+
+    const { profileStore } = createTestStores(root);
+    const service = new ProfileService(profileStore, testVault);
+    const [group] = await service.listGroups();
+    const [profile] = await service.list();
+
+    expect(group.name).toBe("现有密钥");
+    expect(profile.groupId).toBe(group.id);
+    expect(await service.getSecret(profile.id)).toBe("sk-production-secret");
+
+    await service.renameGroup(group.id, "已有渠道");
+    const persisted = JSON.parse(await fs.readFile(profilePath, "utf8"));
+    expect(persisted.version).toBe(3);
+    expect(persisted.groups[0].name).toBe("已有渠道");
+    expect(persisted.profiles[0].groupId).toBe(group.id);
+    expect(await service.getSecret(profile.id)).toBe("sk-production-secret");
+  });
+
+  it("支持创建、命名、调整成员与顺序，删除分组只移出密钥", async () => {
+    const { profileStore } = createTestStores(root);
+    const service = new ProfileService(profileStore, testVault);
+    const first = await service.save({
+      name: "第一把",
+      protocol: "anthropic",
+      baseUrl: "https://a.example",
+      apiKey: "sk-group-first",
+      model: "claude-sonnet-4-5",
+      authMode: "bearer",
+      targets: ["claude"],
+    });
+    const second = await service.save({
+      name: "第二把",
+      protocol: "openai-responses",
+      baseUrl: "https://b.example/v1",
+      apiKey: "sk-group-second",
+      model: "gpt-5.6",
+      authMode: "bearer",
+      targets: ["codex"],
+    });
+
+    const primary = await service.createGroup("主用", [first.id, second.id]);
+    const backup = await service.createGroup("备用", []);
+    await service.renameGroup(primary.id, "常用");
+    await service.updateGroupMembers(primary.id, [first.id]);
+    await service.organize({
+      groupIds: [backup.id, primary.id],
+      profiles: [
+        { id: second.id, groupId: backup.id },
+        { id: first.id, groupId: primary.id },
+      ],
+    });
+
+    expect((await service.listGroups()).map((group) => group.name)).toEqual(["备用", "常用"]);
+    expect((await service.list()).map((profile) => [profile.name, profile.groupId])).toEqual([
+      ["第二把", backup.id],
+      ["第一把", primary.id],
+    ]);
+
+    await service.deleteGroup(backup.id);
+    const afterDelete = await service.list();
+    expect(afterDelete.find((profile) => profile.id === second.id)?.groupId).toBeUndefined();
+    expect(await service.getSecret(second.id)).toBe("sk-group-second");
+  });
+
+  it("批量导入时按钱包名建组、提示同名冲突并跳过重复密钥", async () => {
+    const { profileStore } = createTestStores(root);
+    const service = new ProfileService(profileStore, testVault);
+    const profiles = [{
+      name: "Claude Key",
+      protocol: "anthropic",
+      baseUrl: "https://sub.example",
+      apiKey: "sk-import-claude",
+      model: "",
+      authMode: "bearer",
+      targets: ["claude", "opencode"],
+    }, {
+      name: "Codex Key",
+      protocol: "openai-responses",
+      baseUrl: "https://sub.example/v1",
+      apiKey: "sk-import-codex",
+      model: "",
+      authMode: "bearer",
+      targets: ["codex", "opencode"],
+    }];
+
+    const imported = await service.importProfiles({ groupName: "订阅钱包", profiles });
+    expect(imported).toMatchObject({
+      status: "complete",
+      groupName: "订阅钱包",
+      imported: 2,
+      reused: 0,
+    });
+    expect(imported.profileIds).toHaveLength(2);
+    await expect(service.importProfiles({ groupName: "订阅钱包", profiles }))
+      .resolves.toEqual({ status: "group-conflict", groupName: "订阅钱包" });
+    const reused = await service.importProfiles({
+      groupName: "订阅钱包",
+      groupMode: "existing",
+      profiles,
+    });
+    expect(reused).toMatchObject({ status: "complete", imported: 0, reused: 2 });
+    expect(new Set(reused.profileIds)).toEqual(new Set(imported.profileIds));
+    const separate = await service.importProfiles({
+      groupName: "订阅钱包",
+      groupMode: "new",
+      profiles: [{ ...profiles[1], apiKey: "sk-import-third", name: "第三把" }],
+    });
+    expect(separate).toMatchObject({ status: "complete", groupName: "订阅钱包 (2)", imported: 1 });
+    await expect(service.importProfiles({
+      groupName: "超限钱包",
+      profiles: Array.from({ length: 501 }, (_, index) => ({
+        ...profiles[0],
+        name: `Key ${index + 1}`,
+        apiKey: `sk-import-${index + 1}`,
+      })),
+    })).rejects.toThrow();
+
+    const source = await fs.readFile(path.join(root, "data", "profiles.json"), "utf8");
+    expect(source).not.toContain("sk-import-claude");
+    expect(source).not.toContain("sk-import-codex");
+    expect(source).not.toContain("sk-import-third");
   });
 });
 

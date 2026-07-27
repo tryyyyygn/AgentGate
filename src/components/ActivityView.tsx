@@ -116,7 +116,6 @@ interface RequestRowProps {
   state: RequestMeta;
   m: Messages;
   clock: Intl.DateTimeFormat;
-  delayMs: number;
 }
 
 /**
@@ -128,7 +127,7 @@ interface RequestRowProps {
  * 所以 memo 能实打实地把它们全部跳过。
  */
 const RequestRow = memo(function RequestRow({
-  request, elapsed, state, m, clock, delayMs,
+  request, elapsed, state, m, clock,
 }: RequestRowProps): ReactElement {
   // 网关看不到模型内部的首 token；该字段是首个非空输出事件，所以诚实标成 TTFC。
   const contentTiming = request.streaming === true;
@@ -153,7 +152,7 @@ const RequestRow = memo(function RequestRow({
     : undefined;
 
   return (
-    <article className="request-row" style={{ animationDelay: `${delayMs}ms` }}>
+    <article className="request-row">
       <span
         className={`request-state-icon ${state.tint} ${state.breathe ? "breathe" : ""}`}
         data-hint={state.label}
@@ -260,7 +259,7 @@ export function ActivityView({ requests, active = true }: ActivityViewProps): Re
   const liveText = activeCount > 0 ? fill(m.stream.streaming, { count: activeCount }) : m.stream.idle;
 
   return (
-    <main className="page-scroll" aria-label={m.stream.title} hidden={!active}>
+    <main className="page-scroll activity-page" aria-label={m.stream.title} hidden={!active}>
       <div className="page-inner">
         <div className="section-head rise sticky-head" style={{ alignItems: "center" }}>
           <h1>{m.stream.title}</h1>
@@ -292,7 +291,7 @@ export function ActivityView({ requests, active = true }: ActivityViewProps): Re
         </div>
 
         <div>
-          {visibleRequests.map((request, index) => {
+          {visibleRequests.map((request) => {
             const startedAt = new Date(request.startedAt).getTime();
             /*
              * 已完成的行 elapsed 就是它的 durationMs——一个定值，跟 now 无关。
@@ -312,7 +311,6 @@ export function ActivityView({ requests, active = true }: ActivityViewProps): Re
                 state={meta[request.state]}
                 m={m}
                 clock={clock}
-                delayMs={Math.min(index, 12) * 40}
               />
             );
           })}

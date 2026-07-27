@@ -28,7 +28,7 @@ const SOURCE_ENTRIES = [
   ".gitignore", "LICENSE", "README.md", "README.en.md", "README.ja.md", "README.zh-TW.md",
   "index.html", "package.json", "pnpm-lock.yaml",
   "pnpm-workspace.yaml", "tsconfig.json", "vite.config.ts", "vitest.config.mts",
-  "assets", "electron", "public", "scripts", "src", "tests",
+  "assets", "docs", "electron", "public", "scripts", "src", "tests",
 ];
 const SKIP_DIRS = new Set(["node_modules", "__pycache__"]);
 

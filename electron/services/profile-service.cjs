@@ -13,8 +13,35 @@ const {
 const { SerialExecutor } = require('./storage.cjs')
 
 const ProfileIdSchema = z.string().uuid()
+const ProfileGroupIdSchema = z.string().uuid()
+const ProfileGroupNameSchema = z.string().trim().min(1, 'Group name is required').max(80)
+const ProfileIdsSchema = z.array(ProfileIdSchema).max(500)
 const ConnectionRevisionSchema = z.number().int().positive()
 const EMPTY_KEY_HINT = 'Not set'
+
+const ProfileOrganizationSchema = z.object({
+  groupIds: z.array(ProfileGroupIdSchema).max(500),
+  profiles: z.array(z.object({
+    id: ProfileIdSchema,
+    groupId: ProfileGroupIdSchema.nullable(),
+  })).max(500),
+})
+
+const ImportedProfileSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  protocol: z.enum(['anthropic', 'openai-responses', 'openai-chat', 'gemini']),
+  baseUrl: HttpUrlSchema,
+  apiKey: z.string().trim().min(1).max(32768),
+  model: z.string().trim().max(240).default(''),
+  authMode: z.enum(['api-key', 'bearer']),
+  targets: z.array(z.enum(['claude', 'codex', 'opencode', 'gemini'])).min(1).max(4),
+})
+
+const ImportProfilesSchema = z.object({
+  groupName: ProfileGroupNameSchema,
+  groupMode: z.enum(['existing', 'new']).optional(),
+  profiles: z.array(ImportedProfileSchema).max(500),
+})
 
 /** 网关一条条请求攒出来的账。编辑方案时必须原样带走，见 save()。 */
 const TOKEN_ACCOUNTING_FIELDS = Object.freeze([
@@ -154,6 +181,59 @@ function copyName(name, profiles) {
   return `${baseName} ${suffix}`
 }
 
+function namesEqual(left, right) {
+  return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0
+}
+
+function uniqueName(name, items) {
+  const used = new Set(items.map((item) => item.name.toLocaleLowerCase()))
+  if (!used.has(name.toLocaleLowerCase())) return name
+  let suffix = 2
+  while (used.has(`${name} (${suffix})`.toLocaleLowerCase())) suffix += 1
+  return `${name} (${suffix})`
+}
+
+function secretFingerprint(value) {
+  return crypto.createHash('sha256').update(value, 'utf8').digest('hex')
+}
+
+function connectionFingerprint(protocol, baseUrl, apiKey) {
+  return `${protocol}\n${comparableUrl(baseUrl)}\n${secretFingerprint(apiKey)}`
+}
+
+function importedStoredProfile(input, groupId, profiles, vault, now) {
+  const normalized = endpointUrlsFromInput({
+    baseUrl: input.baseUrl,
+    endpoints: [{ url: input.baseUrl }],
+  })
+  return {
+    id: crypto.randomUUID(),
+    groupId,
+    name: uniqueName(input.name, profiles),
+    protocol: input.protocol,
+    baseUrl: normalized.baseUrl,
+    endpoints: normalized.endpoints.map((url) => ({
+      url,
+      models: [],
+      healthHistory: [],
+      healthTimeline: [],
+    })),
+    model: input.model,
+    authMode: input.authMode,
+    targets: [...new Set(input.targets)],
+    enableToolSearch: false,
+    autoSwitch: {
+      enabled: false,
+      intervalMinutes: DEFAULT_AUTO_SWITCH_INTERVAL_MINUTES,
+    },
+    connectionRevision: 1,
+    keyHint: vault.hint(input.apiKey),
+    encryptedKey: vault.encrypt(input.apiKey),
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
 /**
  * 在检测结果事务内确认调度仍允许提交。
  *
@@ -191,6 +271,229 @@ class ProfileService {
   async list() {
     const data = await this.store.read()
     return data.profiles.map(toPublicProfile)
+  }
+
+  async listGroups() {
+    const data = await this.store.read()
+    return data.groups.map((group) => ({ ...group }))
+  }
+
+  async createGroup(rawName, rawProfileIds = []) {
+    const nameResult = ProfileGroupNameSchema.safeParse(rawName)
+    const idsResult = ProfileIdsSchema.safeParse(rawProfileIds)
+    if (!nameResult.success) throw new Error(validationMessage(nameResult.error))
+    if (!idsResult.success) throw new Error(validationMessage(idsResult.error))
+    const profileIds = new Set(idsResult.data)
+
+    return this.serial.run(async () => {
+      const data = await this.store.read()
+      if (data.groups.some((group) => namesEqual(group.name, nameResult.data))) {
+        throw new Error('A group with this name already exists')
+      }
+      const knownIds = new Set(data.profiles.map((profile) => profile.id))
+      for (const id of profileIds) {
+        if (!knownIds.has(id)) throw new Error('Profile not found')
+      }
+      const now = new Date().toISOString()
+      const group = {
+        id: crypto.randomUUID(),
+        name: nameResult.data,
+        createdAt: now,
+        updatedAt: now,
+      }
+      data.groups.push(group)
+      data.profiles = data.profiles.map((profile) => profileIds.has(profile.id)
+        ? { ...profile, groupId: group.id }
+        : profile)
+      await this.store.write(data)
+      return { ...group }
+    })
+  }
+
+  async renameGroup(rawId, rawName) {
+    const idResult = ProfileGroupIdSchema.safeParse(rawId)
+    const nameResult = ProfileGroupNameSchema.safeParse(rawName)
+    if (!idResult.success) throw new Error(validationMessage(idResult.error))
+    if (!nameResult.success) throw new Error(validationMessage(nameResult.error))
+
+    return this.serial.run(async () => {
+      const data = await this.store.read()
+      const index = data.groups.findIndex((group) => group.id === idResult.data)
+      if (index === -1) throw new Error('Group not found')
+      if (data.groups.some((group, groupIndex) => (
+        groupIndex !== index && namesEqual(group.name, nameResult.data)
+      ))) throw new Error('A group with this name already exists')
+      const group = {
+        ...data.groups[index],
+        name: nameResult.data,
+        updatedAt: new Date().toISOString(),
+      }
+      data.groups[index] = group
+      await this.store.write(data)
+      return { ...group }
+    })
+  }
+
+  async updateGroupMembers(rawId, rawProfileIds) {
+    const idResult = ProfileGroupIdSchema.safeParse(rawId)
+    const idsResult = ProfileIdsSchema.safeParse(rawProfileIds)
+    if (!idResult.success) throw new Error(validationMessage(idResult.error))
+    if (!idsResult.success) throw new Error(validationMessage(idsResult.error))
+    const profileIds = new Set(idsResult.data)
+
+    return this.serial.run(async () => {
+      const data = await this.store.read()
+      const groupIndex = data.groups.findIndex((group) => group.id === idResult.data)
+      if (groupIndex === -1) throw new Error('Group not found')
+      const knownIds = new Set(data.profiles.map((profile) => profile.id))
+      for (const id of profileIds) {
+        if (!knownIds.has(id)) throw new Error('Profile not found')
+      }
+      data.profiles = data.profiles.map((profile) => {
+        if (profileIds.has(profile.id)) return { ...profile, groupId: idResult.data }
+        if (profile.groupId !== idResult.data) return profile
+        const { groupId, ...ungrouped } = profile
+        return ungrouped
+      })
+      data.groups[groupIndex] = {
+        ...data.groups[groupIndex],
+        updatedAt: new Date().toISOString(),
+      }
+      await this.store.write(data)
+      return data.profiles.map(toPublicProfile)
+    })
+  }
+
+  async deleteGroup(rawId) {
+    const idResult = ProfileGroupIdSchema.safeParse(rawId)
+    if (!idResult.success) throw new Error(validationMessage(idResult.error))
+
+    return this.serial.run(async () => {
+      const data = await this.store.read()
+      if (!data.groups.some((group) => group.id === idResult.data)) throw new Error('Group not found')
+      data.groups = data.groups.filter((group) => group.id !== idResult.data)
+      data.profiles = data.profiles.map((profile) => {
+        if (profile.groupId !== idResult.data) return profile
+        const { groupId, ...ungrouped } = profile
+        return ungrouped
+      })
+      await this.store.write(data)
+      return { ok: true }
+    })
+  }
+
+  async organize(rawInput) {
+    const result = ProfileOrganizationSchema.safeParse(rawInput)
+    if (!result.success) throw new Error(validationMessage(result.error))
+    const input = result.data
+    if (new Set(input.groupIds).size !== input.groupIds.length) {
+      throw new Error('Group order contains duplicates')
+    }
+    if (new Set(input.profiles.map((profile) => profile.id)).size !== input.profiles.length) {
+      throw new Error('Profile order contains duplicates')
+    }
+
+    return this.serial.run(async () => {
+      const data = await this.store.read()
+      const groupsById = new Map(data.groups.map((group) => [group.id, group]))
+      const profilesById = new Map(data.profiles.map((profile) => [profile.id, profile]))
+      for (const id of input.groupIds) {
+        if (!groupsById.has(id)) throw new Error('Group not found')
+      }
+      for (const assignment of input.profiles) {
+        if (!profilesById.has(assignment.id)) throw new Error('Profile not found')
+        if (assignment.groupId && !groupsById.has(assignment.groupId)) throw new Error('Group not found')
+      }
+
+      const orderedGroups = input.groupIds.map((id) => groupsById.get(id))
+      for (const group of data.groups) {
+        if (!input.groupIds.includes(group.id)) orderedGroups.push(group)
+      }
+      const orderedProfiles = input.profiles.map((assignment) => {
+        const profile = profilesById.get(assignment.id)
+        profilesById.delete(assignment.id)
+        if (assignment.groupId) return { ...profile, groupId: assignment.groupId }
+        const { groupId, ...ungrouped } = profile
+        return ungrouped
+      })
+      for (const profile of data.profiles) {
+        if (profilesById.has(profile.id)) orderedProfiles.push(profile)
+      }
+      data.groups = orderedGroups
+      data.profiles = orderedProfiles
+      await this.store.write(data)
+      return {
+        groups: data.groups.map((group) => ({ ...group })),
+        profiles: data.profiles.map(toPublicProfile),
+      }
+    })
+  }
+
+  async importProfiles(rawInput) {
+    const result = ImportProfilesSchema.safeParse(rawInput)
+    if (!result.success) throw new Error(validationMessage(result.error))
+    const input = result.data
+
+    return this.serial.run(async () => {
+      const data = await this.store.read()
+      const existingGroup = data.groups.find((group) => namesEqual(group.name, input.groupName))
+      if (existingGroup && input.groupMode === undefined) {
+        return { status: 'group-conflict', groupName: input.groupName }
+      }
+
+      const now = new Date().toISOString()
+      let group = input.groupMode === 'existing' ? existingGroup : undefined
+      if (!group) {
+        const name = input.groupMode === 'new'
+          ? uniqueName(input.groupName, data.groups)
+          : input.groupName
+        group = {
+          id: crypto.randomUUID(),
+          name,
+          createdAt: now,
+          updatedAt: now,
+        }
+        data.groups.push(group)
+      }
+
+      const connections = new Map()
+      for (const profile of data.profiles) {
+        if (!profile.encryptedKey) continue
+        const apiKey = this.vault.decrypt(profile.encryptedKey)
+        connections.set(connectionFingerprint(profile.protocol, profile.baseUrl, apiKey), profile.id)
+      }
+
+      let imported = 0
+      let reused = 0
+      const profileIds = []
+      for (const item of input.profiles) {
+        const fingerprint = connectionFingerprint(item.protocol, item.baseUrl, item.apiKey)
+        const duplicateId = connections.get(fingerprint)
+        if (duplicateId) {
+          const index = data.profiles.findIndex((profile) => profile.id === duplicateId)
+          if (index >= 0) data.profiles[index] = { ...data.profiles[index], groupId: group.id }
+          profileIds.push(duplicateId)
+          reused += 1
+          continue
+        }
+        const profile = importedStoredProfile(item, group.id, data.profiles, this.vault, now)
+        data.profiles.push(profile)
+        connections.set(fingerprint, profile.id)
+        profileIds.push(profile.id)
+        imported += 1
+      }
+
+      await this.store.write(data)
+      return {
+        status: 'complete',
+        groupId: group.id,
+        groupName: group.name,
+        imported,
+        reused,
+        skipped: 0,
+        profileIds: [...new Set(profileIds)],
+      }
+    })
   }
 
   /**
@@ -258,6 +561,10 @@ class ProfileService {
       if (input.id && existingIndex === -1) throw new Error('Profile not found')
 
       const existing = existingIndex >= 0 ? data.profiles[existingIndex] : undefined
+      const groupId = input.groupId === undefined ? existing?.groupId : input.groupId || undefined
+      if (groupId && !data.groups.some((group) => group.id === groupId)) {
+        throw new Error('Group not found')
+      }
       const now = new Date().toISOString()
       const suppliedKey = input.apiKey?.trim() || ''
       const normalized = endpointUrlsFromInput(input)
@@ -288,6 +595,7 @@ class ProfileService {
         || endpoints[0]
       const profile = {
         id: existing?.id || crypto.randomUUID(),
+        ...(groupId ? { groupId } : {}),
         name: input.name,
         protocol: input.protocol,
         baseUrl: activeEndpoint.url,
@@ -350,6 +658,7 @@ class ProfileService {
       const apiKey = this.vault.decrypt(source.encryptedKey)
       const duplicate = {
         id: crypto.randomUUID(),
+        ...(source.groupId ? { groupId: source.groupId } : {}),
         name: copyName(source.name, data.profiles),
         protocol: source.protocol,
         baseUrl: source.baseUrl,

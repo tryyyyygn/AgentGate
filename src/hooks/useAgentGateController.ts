@@ -11,6 +11,8 @@ import type {
   GatewayStartSettings,
   GatewayStopSettings,
   Profile,
+  ProfileGroup,
+  ProfileOrganizationInput,
   SaveProfileInput,
   StateChangedEvent,
 } from "../types";
@@ -40,6 +42,13 @@ export interface AgentGateController {
   saveProfile: (input: SaveProfileInput) => Promise<Profile | undefined>;
   duplicateProfile: (profile: Profile) => Promise<Profile | undefined>;
   reorderProfiles: (ids: string[]) => Promise<void>;
+  saveProfileGroup: (
+    group: ProfileGroup | undefined,
+    name: string,
+    profileIds: string[],
+  ) => Promise<boolean>;
+  deleteProfileGroup: (group: ProfileGroup) => Promise<boolean>;
+  organizeProfiles: (input: ProfileOrganizationInput) => Promise<void>;
   applyProfile: (id: string, targets?: ClientTarget[]) => Promise<void>;
   testProfile: (id: string) => Promise<string[] | undefined>;
   testProfileDraft: (input: SaveProfileInput) => Promise<string[] | undefined>;
@@ -90,6 +99,7 @@ export function useAgentGateController(): AgentGateController {
           || nextRevision >= currentRevision);
       return {
         ...next,
+        profileGroups: next.profileGroups ?? current.profileGroups,
         settings: next.settings ?? current.settings,
         activeRequests: acceptsRequestSnapshot
           ? next.activeRequests
@@ -323,6 +333,99 @@ export function useAgentGateController(): AgentGateController {
       await refreshSilently(m.current.toast.reordered);
     } catch (error) {
       setData((current) => ({ ...current, profiles: previous }));
+      setToast({ kind: "error", message: describeError(error) });
+    } finally {
+      commandLock.current = false;
+    }
+  }
+
+  async function saveProfileGroup(
+    group: ProfileGroup | undefined,
+    name: string,
+    profileIds: string[],
+  ): Promise<boolean> {
+    if (commandLock.current) return false;
+    commandLock.current = true;
+    setBusy("group");
+    setBusyId(group?.id);
+    try {
+      if (group) {
+        if (group.name !== name) await api.renameProfileGroup(group.id, name);
+        await api.updateProfileGroupMembers(group.id, profileIds);
+      } else {
+        await api.createProfileGroup(name, profileIds);
+      }
+      const completedMessage = fill(m.current.toast.saved, { name });
+      if (await refreshSilently(completedMessage)) {
+        setToast({ kind: "success", message: completedMessage });
+      }
+      return true;
+    } catch (error) {
+      setToast({ kind: "error", message: describeError(error) });
+      return false;
+    } finally {
+      commandLock.current = false;
+      setBusy(null);
+      setBusyId(undefined);
+    }
+  }
+
+  async function deleteProfileGroup(group: ProfileGroup): Promise<boolean> {
+    if (commandLock.current) return false;
+    commandLock.current = true;
+    setBusy("group");
+    setBusyId(group.id);
+    try {
+      await api.deleteProfileGroup(group.id);
+      const completedMessage = fill(m.current.toast.deleted, { name: group.name });
+      if (await refreshSilently(completedMessage)) {
+        setToast({ kind: "success", message: completedMessage });
+      }
+      return true;
+    } catch (error) {
+      setToast({ kind: "error", message: describeError(error) });
+      return false;
+    } finally {
+      commandLock.current = false;
+      setBusy(null);
+      setBusyId(undefined);
+    }
+  }
+
+  async function organizeProfiles(input: ProfileOrganizationInput): Promise<void> {
+    if (commandLock.current) return;
+    commandLock.current = true;
+    const previousProfiles = data.profiles;
+    const previousGroups = data.profileGroups ?? [];
+    const groupsById = new Map(previousGroups.map((group) => [group.id, group]));
+    const profilesById = new Map(previousProfiles.map((profile) => [profile.id, profile]));
+    const optimisticGroups = [
+      ...input.groupIds.map((id) => groupsById.get(id)).filter((group): group is ProfileGroup => Boolean(group)),
+      ...previousGroups.filter((group) => !input.groupIds.includes(group.id)),
+    ];
+    const optimisticProfiles = [
+      ...input.profiles.map(({ id, groupId }) => {
+        const profile = profilesById.get(id);
+        if (!profile) return undefined;
+        profilesById.delete(id);
+        return { ...profile, groupId: groupId ?? undefined };
+      }).filter((profile) => profile !== undefined),
+      ...previousProfiles.filter((profile) => profilesById.has(profile.id)),
+    ];
+    setData((current) => ({
+      ...current,
+      profileGroups: optimisticGroups,
+      profiles: optimisticProfiles,
+    }));
+    try {
+      await api.organizeProfiles(input);
+      await refreshSilently(m.current.toast.reordered);
+    } catch (error) {
+      setData((current) => ({
+        ...current,
+        profileGroups: previousGroups,
+        profiles: previousProfiles,
+      }));
       setToast({ kind: "error", message: describeError(error) });
     } finally {
       commandLock.current = false;
@@ -713,6 +816,9 @@ export function useAgentGateController(): AgentGateController {
     saveProfile,
     duplicateProfile,
     reorderProfiles,
+    saveProfileGroup,
+    deleteProfileGroup,
+    organizeProfiles,
     applyProfile,
     testProfile,
     testProfileDraft,

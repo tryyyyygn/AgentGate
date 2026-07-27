@@ -4,7 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 
 globalThis.window = {};
 
-const { KeyringView } = await import("../src/components/KeyringView");
+const {
+  KeyringView,
+  organizeGroupDrop,
+  organizeProfileDrop,
+} = await import("../src/components/KeyringView");
 const { ActivityView } = await import("../src/components/ActivityView");
 const { OverviewView } = await import("../src/components/OverviewView");
 const {
@@ -16,6 +20,13 @@ const {
   topLevelSessionIds,
 } = await import("../src/components/SessionsView");
 const { SettingsView } = await import("../src/components/SettingsView");
+const { NAV_ORDER } = await import("../src/App");
+const {
+  WALLET_AUTO_REFRESH_MS,
+  WALLET_CHECK_CONCURRENCY,
+  WalletView,
+  primaryWalletSubscription,
+} = await import("../src/components/WalletView");
 const {
   StatusView,
   parseStoredProbeRecords,
@@ -27,6 +38,7 @@ const {
   probeState,
   storedAutoProbeEnabled,
   storedProbeInterval,
+  visibleProbeSamples,
 } = await import("../src/components/StatusView");
 const { BLANK_PROFILE_INPUT } = await import("../src/config");
 const { I18nProvider, MESSAGES } = await import("../src/i18n");
@@ -82,6 +94,10 @@ function codexSession(id, parentNativeId) {
 }
 
 describe("frontend state boundaries", () => {
+  it("钱包导航位于概览之后、密钥之前", () => {
+    expect(NAV_ORDER.slice(0, 3)).toEqual(["overview", "wallet", "keyring"]);
+  });
+
   it("新建方案默认使用 OpenAI Responses 并指向 Codex", () => {
     expect(BLANK_PROFILE_INPUT.protocol).toBe("openai-responses");
     expect(BLANK_PROFILE_INPUT.targets).toEqual(["codex"]);
@@ -299,6 +315,45 @@ describe("frontend state boundaries", () => {
     expect(html).toContain("99.0%");
   });
 
+  it("密钥与分组都能拖到目标末尾，并即时给出完整排序预览", () => {
+    const first = profile("00000000-0000-4000-8000-000000000031", "First", "codex");
+    const second = profile("00000000-0000-4000-8000-000000000032", "Second", "codex");
+    const third = profile("00000000-0000-4000-8000-000000000033", "Third", "codex");
+    const primary = {
+      id: "00000000-0000-4000-8000-000000000034",
+      name: "Primary",
+      createdAt: first.createdAt,
+      updatedAt: first.updatedAt,
+    };
+    const backup = {
+      id: "00000000-0000-4000-8000-000000000035",
+      name: "Backup",
+      createdAt: first.createdAt,
+      updatedAt: first.updatedAt,
+    };
+    const profiles = [
+      { ...first, groupId: primary.id },
+      { ...second, groupId: primary.id },
+      { ...third, groupId: primary.id },
+    ];
+
+    expect(organizeProfileDrop(
+      [primary, backup],
+      profiles,
+      first.id,
+      primary.id,
+      third.id,
+      "after",
+    )?.profiles.map((item) => item.id)).toEqual([second.id, third.id, first.id]);
+    expect(organizeGroupDrop(
+      [primary, backup],
+      profiles,
+      primary.id,
+      backup.id,
+      "after",
+    )?.groupIds).toEqual([backup.id, primary.id]);
+  });
+
   it("渠道实测按 5 秒和 10 秒分四级，任何不可用都标为故障", () => {
     const sample = (ok, totalMs) => ({
       ok,
@@ -318,6 +373,15 @@ describe("frontend state boundaries", () => {
     expect(probeState({ ...sample(false, 200), statusCode: 503 })).toBe("unhealthy");
     expect(probeState(sample(false, 200))).toBe("unhealthy");
     expect(probeAvailability([sample(true, 200), sample(false, 200), sample(true, 200)])).toBe(67);
+
+    const history = Array.from({ length: 31 }, (_, index) => ({
+      ...sample(index !== 0, 200),
+      checkedAt: new Date(Date.parse("2026-07-27T00:00:00.000Z") + index * 600_000).toISOString(),
+    }));
+    const visible = visibleProbeSamples(history);
+    expect(visible).toHaveLength(30);
+    expect(visible[0].checkedAt).toBe(history[1].checkedAt);
+    expect(probeAvailability(visible)).toBe(100);
   });
 
   it("状态倒计时按秒显示，手动检测不需要改变固定时钟", () => {
@@ -335,6 +399,28 @@ describe("frontend state boundaries", () => {
     ));
 
     expect(html).toContain('class="page-scroll status-page"');
+    expect(html).toContain('hidden=""');
+  });
+
+  it("钱包固定每 5 分钟刷新，并优先显示每日额度使用率最高的订阅", () => {
+    expect(WALLET_AUTO_REFRESH_MS).toBe(300_000);
+    expect(WALLET_CHECK_CONCURRENCY).toBe(3);
+    expect(primaryWalletSubscription([
+      { id: 1, name: "A", dailyUsedUsd: 2, dailyLimitUsd: 20 },
+      { id: 2, name: "B", dailyUsedUsd: 8, dailyLimitUsd: 10 },
+      { id: 3, name: "C", dailyUsedUsd: 99 },
+    ])?.id).toBe(2);
+
+    const html = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "zh" },
+      React.createElement(WalletView, {
+        active: false,
+        onToast: vi.fn(),
+        onProfilesChanged: vi.fn(),
+      }),
+    ));
+    expect(html).toContain('class="page-scroll wallet-page"');
     expect(html).toContain('hidden=""');
   });
 

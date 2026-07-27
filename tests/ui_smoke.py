@@ -82,10 +82,17 @@ with sync_playwright() as playwright:
 
     # 其余断言固定在英文下跑，避免受系统语言影响
     select_language(page, "English")
+    page.get_by_role("radio", name="α FIELD", exact=True).click()
+    page.wait_for_timeout(250)
+    settings_page = page.locator('main[aria-label="Config"]')
+    settings_page.evaluate("node => { node.dataset.mountProbe = 'settings'; }")
 
     # 概览：hero 标题 + 四张客户端卡片
     page.get_by_role("button", name="OVERVIEW", exact=True).click()
     page.locator(".hero h1").wait_for()
+    assert settings_page.get_attribute("data-mount-probe") == "settings"
+    overview_page = page.locator('main[aria-label="OVERVIEW"]')
+    overview_page.evaluate("node => { node.dataset.mountProbe = 'overview'; }")
     assert page.locator(".socket-card").count() == 4
     assert page.locator(".socket-title small").count() == 3
     assert page.locator(".socket-title small").all_inner_texts() == [
@@ -101,7 +108,19 @@ with sync_playwright() as playwright:
     page.get_by_role("button", name="KEYS", exact=True).click()
     page.get_by_role("heading", name="Attractor Fields", exact=True).wait_for()
     assert page.locator(".keyring-row").count() == 3
+    assert page.locator(".keyring-row").first.evaluate(
+        "node => getComputedStyle(node).animationName"
+    ) == "none"
+    assert page.locator(".keyring-group-head").count() == 2
+    assert page.locator(".keyring-group-tools").count() == 2
     assert "1.25B" in page.locator(".keyring-row").first.inner_text()
+    first_group_toggle = page.locator(".keyring-group-toggle").first
+    assert first_group_toggle.get_attribute("aria-expanded") == "true"
+    first_group_toggle.click()
+    page.wait_for_function("() => document.querySelectorAll('.keyring-row').length === 1")
+    assert first_group_toggle.get_attribute("aria-expanded") == "false"
+    first_group_toggle.click()
+    page.wait_for_function("() => document.querySelectorAll('.keyring-row').length === 3")
     key_columns = page.evaluate(
         """
         () => [...document.querySelectorAll('.keyring-head')].map(head => [
@@ -148,14 +167,83 @@ with sync_playwright() as playwright:
     assert page.get_by_role("main", name="Attractor Fields").evaluate(
         "node => !node.inert && node.getAttribute('aria-hidden') === null"
     )
+
+    # 原生拖放：悬停到目标下半区时先预览顺序，落下后仍须保留到末尾。
+    page.get_by_role("button", name="KEYS", exact=True).click()
+    page.get_by_role("heading", name="Attractor Fields", exact=True).wait_for()
+    profile_rows = page.locator(".keyring-row")
+    source_id = profile_rows.first.get_attribute("data-flip-id")
+    target_id = profile_rows.last.get_attribute("data-flip-id")
+    assert source_id is not None and target_id is not None
+    source_row = page.locator(f'.keyring-row[data-flip-id="{source_id}"]')
+    target_row = page.locator(f'.keyring-row[data-flip-id="{target_id}"]')
+    source_name = source_row.locator(".keyring-name strong").inner_text()
+    target_box = target_row.bounding_box()
+    assert target_box is not None
+    profile_transfer = page.evaluate_handle("new DataTransfer()")
+    source_row.dispatch_event("dragstart", {"dataTransfer": profile_transfer})
+    target_row.dispatch_event("dragover", {
+        "dataTransfer": profile_transfer,
+        "clientY": target_box["y"] + target_box["height"] - 2,
+    })
+    target_row.wait_for(state="attached")
+    page.wait_for_timeout(100)
+    assert "drop-after" in target_row.get_attribute("class")
+    assert profile_rows.last.locator(".keyring-name strong").inner_text() == source_name
+    target_row.dispatch_event("drop", {
+        "dataTransfer": profile_transfer,
+        "clientY": target_box["y"] + target_box["height"] - 2,
+    })
+    source_row.dispatch_event("dragend", {"dataTransfer": profile_transfer})
+    page.wait_for_function(
+        "name => document.querySelector('.keyring-row:last-of-type .keyring-name strong')?.textContent.trim() === name",
+        arg=source_name,
+    )
+
+    group_heads = page.locator(".keyring-group-head")
+    first_group_id = group_heads.first.get_attribute("data-flip-id")
+    second_group_id = group_heads.nth(1).get_attribute("data-flip-id")
+    assert first_group_id is not None and second_group_id is not None
+    first_group = page.locator(f'.keyring-group-head[data-flip-id="{first_group_id}"]')
+    second_group = page.locator(f'.keyring-group-head[data-flip-id="{second_group_id}"]')
+    first_group_name = first_group.locator(".keyring-group-toggle strong").inner_text()
+    second_box = second_group.bounding_box()
+    assert second_box is not None
+    group_transfer = page.evaluate_handle("new DataTransfer()")
+    first_group.locator(".keyring-group-grip").dispatch_event(
+        "dragstart", {"dataTransfer": group_transfer},
+    )
+    second_group.dispatch_event("dragover", {
+        "dataTransfer": group_transfer,
+        "clientY": second_box["y"] + second_box["height"] - 2,
+    })
+    page.wait_for_timeout(100)
+    assert "drop-after" in second_group.get_attribute("class")
+    assert group_heads.last.locator(".keyring-group-toggle strong").inner_text() == first_group_name
+    second_group.dispatch_event("drop", {
+        "dataTransfer": group_transfer,
+        "clientY": second_box["y"] + second_box["height"] - 2,
+    })
+    first_group.locator(".keyring-group-grip").dispatch_event(
+        "dragend", {"dataTransfer": group_transfer},
+    )
+    page.wait_for_function(
+        "name => [...document.querySelectorAll('.keyring-group-toggle strong')].at(-1)?.textContent.trim() === name",
+        arg=first_group_name,
+    )
     page.get_by_role("button", name="OVERVIEW", exact=True).click()
     page.locator(".hero h1").wait_for()
+    assert overview_page.get_attribute("data-mount-probe") == "overview"
 
     # 动态：实时请求流（活跃请求徽标会并入按钮可访问名，不能精确匹配）
     page.locator(".top-nav").get_by_role("button", name="STREAM").click()
     stream = page.get_by_role("main", name="Stream", exact=True)
     stream.get_by_role("heading", name="Stream", exact=True).wait_for()
+    assert stream.evaluate("node => getComputedStyle(node).getPropertyValue('--page-info').trim().toUpperCase()") == "#4D7078"
     assert page.locator(".request-row").count() == 3
+    assert stream.locator(".request-row").first.evaluate(
+        "node => getComputedStyle(node).animationName"
+    ) == "none"
     assert "LAST 3 DAYS" in stream.locator(".head-note").inner_text()
     page.get_by_role("radio", name="DONE", exact=True).click()
     assert page.locator(".request-row .tint-complete").count() == 2
@@ -173,11 +261,41 @@ with sync_playwright() as playwright:
     assert re.search(r"\b\d{1,3}s\b", console_text), console_text
     assert status.locator(".status-row-action").count() == page.locator(".status-row").count()
     assert status.locator(".status-row-name small").count() == 0
+    assert status.locator(".status-row-availability small").count() == 0
+    assert status.evaluate("node => getComputedStyle(node).getPropertyValue('--page-info').trim().toUpperCase()") == "#4D7078"
+    assert status.evaluate(
+        "() => [...document.querySelectorAll('.status-row')].every(row => row.querySelectorAll('.status-pulse-bar').length === 30)"
+    )
     assert "RESPONSES" not in status.locator(".status-table").inner_text()
     page.set_viewport_size({"width": 1000, "height": 620})
     page.wait_for_timeout(700)
     assert status.locator(".status-table").evaluate("node => node.scrollWidth <= node.clientWidth")
     page.screenshot(path=str(OUTPUT_DIR / "status-1000x620.png"), full_page=False)
+    page.set_viewport_size({"width": 1280, "height": 800})
+
+    # 钱包：紧凑操作列、Sub2API 登录态导入，以及同名分组选择。
+    page.get_by_role("button", name="WALLET", exact=True).click()
+    wallet = page.get_by_role("main", name="Wallet", exact=True)
+    wallet.get_by_role("heading", name="Wallet", exact=True).wait_for()
+    assert wallet.locator(".wallet-row").count() == 3
+    assert wallet.locator('.wallet-row').first.locator('button[data-hint="Import keys"]').count() == 1
+    page.set_viewport_size({"width": 1000, "height": 620})
+    page.wait_for_timeout(100)
+    assert wallet.locator(".wallet-table").evaluate("node => node.scrollWidth <= node.clientWidth")
+    assert wallet.locator(".wallet-actions").evaluate_all(
+        "nodes => nodes.every(node => node.scrollWidth <= node.clientWidth)"
+    )
+    page.screenshot(path=str(OUTPUT_DIR / "wallet-1000x620.png"), full_page=False)
+    import_button = wallet.locator('.wallet-row').first.locator('button[data-hint="Import keys"]')
+    import_button.click()
+    page.get_by_text(re.compile(r"Imported into .*1 new")).wait_for()
+    import_button.click()
+    conflict = page.get_by_role("dialog", name="Group already exists")
+    conflict.wait_for()
+    conflict.get_by_role("button", name="CANCEL", exact=True).click()
+    assert conflict.count() == 0
+    page.get_by_role("button", name="KEYS", exact=True).click()
+    assert page.locator(".keyring-group-head", has_text="主力余额").count() == 1
     page.set_viewport_size({"width": 1280, "height": 800})
 
     # 动态页常驻；切走再回来，筛选不会重置。
@@ -234,7 +352,28 @@ with sync_playwright() as playwright:
     page.get_by_role("heading", name="Config", exact=True).wait_for()
     assert page.get_by_text("Codex tool bridge").count() == 0
     assert page.locator(".settings-row-copy small").count() == 0
-    assert page.get_by_text("Current version 1.7.2", exact=True).is_visible()
+    assert page.get_by_text("Current version 1.8.0", exact=True).is_visible()
+
+    # 深色主题下局部信息蓝仍保持低饱和，不回退到全局高饱和蓝。
+    page.get_by_role("radio", name="β FIELD", exact=True).click()
+    page.wait_for_timeout(250)
+    page.set_viewport_size({"width": 1000, "height": 620})
+    page.get_by_role("button", name="STATUS", exact=True).click()
+    dark_status = page.get_by_role("main", name="CHANNEL STATUS", exact=True)
+    dark_status.locator(".status-table").wait_for()
+    page.wait_for_timeout(500)
+    assert dark_status.evaluate(
+        "node => getComputedStyle(node).getPropertyValue('--page-info').trim().toUpperCase()"
+    ) == "#7296A0"
+    page.screenshot(path=str(OUTPUT_DIR / "status-dark-1000x620.png"), full_page=False)
+    page.locator(".top-nav").get_by_role("button", name="STREAM").click()
+    dark_stream = page.get_by_role("main", name="Stream", exact=True)
+    dark_stream.locator(".request-row").first.wait_for()
+    page.wait_for_timeout(500)
+    assert dark_stream.evaluate(
+        "node => getComputedStyle(node).getPropertyValue('--page-info').trim().toUpperCase()"
+    ) == "#7296A0"
+    page.screenshot(path=str(OUTPUT_DIR / "activity-dark-1000x620.png"), full_page=False)
 
     page.get_by_role("button", name="OVERVIEW", exact=True).click()
     layouts = {

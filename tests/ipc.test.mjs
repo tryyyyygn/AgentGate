@@ -30,11 +30,34 @@ function createHarness({ gatewayRoutes = [], gatewayStatus, ...overrides } = {})
     isTrustedSender: vi.fn(() => true),
     profileService: {
       list: vi.fn().mockResolvedValue([profile]),
+      listGroups: vi.fn().mockResolvedValue([]),
       save: vi.fn().mockImplementation(async (input) => {
         trace.push("save");
-        return { ...profile, ...input };
+        return { ...profile, ...input, id: input.id ?? profile.id };
+      }),
+      createGroup: vi.fn().mockResolvedValue({ id: "00000000-0000-4000-8000-000000000902" }),
+      renameGroup: vi.fn().mockResolvedValue({ id: "00000000-0000-4000-8000-000000000902" }),
+      updateGroupMembers: vi.fn().mockResolvedValue([profile]),
+      deleteGroup: vi.fn().mockResolvedValue({ ok: true }),
+      organize: vi.fn().mockResolvedValue({ groups: [], profiles: [profile] }),
+      delete: vi.fn().mockResolvedValue({ ok: true }),
+    },
+    walletService: {
+      list: vi.fn().mockResolvedValue([]),
+      save: vi.fn().mockImplementation(async (input) => ({ id: "wallet-id", ...input })),
+      importSub2ApiKeys: vi.fn().mockResolvedValue({
+        status: "complete",
+        groupName: "余额",
+        imported: 1,
+        reused: 0,
+        skipped: 0,
+        profileIds: [profile.id],
       }),
       delete: vi.fn().mockResolvedValue({ ok: true }),
+      check: vi.fn().mockResolvedValue({ id: "wallet-id", balance: { status: "ok" } }),
+    },
+    walletLoginService: {
+      login: vi.fn().mockResolvedValue({ cancelled: false, wallet: { id: "wallet-id" } }),
     },
     clientService: {
       scan: vi.fn().mockResolvedValue([]),
@@ -201,6 +224,59 @@ describe("IPC sessions", () => {
   });
 });
 
+describe("IPC wallets", () => {
+  it("独立转发钱包的列表、保存、登录、导入、检测和删除操作", async () => {
+    const { handlers, dependencies, profile } = createHarness();
+    const input = {
+      name: "余额",
+      siteUrl: "https://relay.example",
+      template: "sub2api",
+      lowBalanceUsd: 5,
+    };
+
+    await expect(handlers.get(CHANNELS.listWallets)(null)).resolves.toEqual([]);
+    await expect(handlers.get(CHANNELS.saveWallet)(null, input)).resolves.toMatchObject(input);
+    await expect(handlers.get(CHANNELS.loginWallet)(null, "wallet-id"))
+      .resolves.toMatchObject({ cancelled: false, wallet: { id: "wallet-id" } });
+    await expect(handlers.get(CHANNELS.importWalletKeys)(null, "wallet-id", "existing"))
+      .resolves.toMatchObject({ status: "complete", imported: 1 });
+    await expect(handlers.get(CHANNELS.checkWallet)(null, "wallet-id"))
+      .resolves.toMatchObject({ id: "wallet-id" });
+    await expect(handlers.get(CHANNELS.deleteWallet)(null, "wallet-id"))
+      .resolves.toEqual({ ok: true });
+    expect(dependencies.walletService.list).toHaveBeenCalledTimes(1);
+    expect(dependencies.walletService.save).toHaveBeenCalledWith(input);
+    expect(dependencies.walletLoginService.login).toHaveBeenCalledWith("wallet-id");
+    expect(dependencies.walletService.importSub2ApiKeys).toHaveBeenCalledWith("wallet-id", "existing");
+    expect(dependencies.healthService.test).toHaveBeenCalledWith(profile.id);
+    expect(dependencies.walletService.check).toHaveBeenCalledWith("wallet-id");
+    expect(dependencies.walletService.delete).toHaveBeenCalledWith("wallet-id");
+  });
+});
+
+describe("IPC profile groups", () => {
+  it("转发分组创建、改名、成员调整、排序和删除操作", async () => {
+    const { handlers, dependencies, profile } = createHarness();
+    const groupId = "00000000-0000-4000-8000-000000000902";
+    const organization = {
+      groupIds: [groupId],
+      profiles: [{ id: profile.id, groupId }],
+    };
+
+    await handlers.get(CHANNELS.createProfileGroup)(null, "主用", [profile.id]);
+    await handlers.get(CHANNELS.renameProfileGroup)(null, groupId, "常用");
+    await handlers.get(CHANNELS.updateProfileGroupMembers)(null, groupId, [profile.id]);
+    await handlers.get(CHANNELS.organizeProfiles)(null, organization);
+    await handlers.get(CHANNELS.deleteProfileGroup)(null, groupId);
+
+    expect(dependencies.profileService.createGroup).toHaveBeenCalledWith("主用", [profile.id]);
+    expect(dependencies.profileService.renameGroup).toHaveBeenCalledWith(groupId, "常用");
+    expect(dependencies.profileService.updateGroupMembers).toHaveBeenCalledWith(groupId, [profile.id]);
+    expect(dependencies.profileService.organize).toHaveBeenCalledWith(organization);
+    expect(dependencies.profileService.deleteGroup).toHaveBeenCalledWith(groupId);
+  });
+});
+
 describe("IPC shutdown gate", () => {
   it("退出屏障期间拒绝写入，但允许只读快照和删除预演", async () => {
     const isShuttingDown = vi.fn(() => true);
@@ -245,6 +321,20 @@ describe("IPC update install", () => {
 });
 
 describe("IPC gateway coordination", () => {
+  it("新建方案保存后自动识别一次模型，再刷新网关连接", async () => {
+    const { handlers, trace, profile, dependencies } = createHarness();
+    const input = saveInput(profile);
+    delete input.id;
+    input.apiKey = "sk-new-profile";
+
+    const result = await handlers.get(CHANNELS.saveProfile)(null, input);
+
+    expect(result).toMatchObject({ id: profile.id, availableModels: ["gpt-test"] });
+    expect(dependencies.healthService.test).toHaveBeenCalledOnce();
+    expect(dependencies.healthService.test).toHaveBeenCalledWith(profile.id);
+    expect(trace).toEqual(["save", "test", "refresh"]);
+  });
+
   it("保存方案只刷新网关连接，不自动识别模型", async () => {
     const { handlers, trace, profile } = createHarness();
 

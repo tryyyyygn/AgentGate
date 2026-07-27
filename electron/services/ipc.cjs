@@ -6,6 +6,11 @@ const CHANNELS = Object.freeze({
   saveProfile: 'agentgate:save-profile',
   duplicateProfile: 'agentgate:duplicate-profile',
   reorderProfiles: 'agentgate:reorder-profiles',
+  createProfileGroup: 'agentgate:create-profile-group',
+  renameProfileGroup: 'agentgate:rename-profile-group',
+  updateProfileGroupMembers: 'agentgate:update-profile-group-members',
+  deleteProfileGroup: 'agentgate:delete-profile-group',
+  organizeProfiles: 'agentgate:organize-profiles',
   deleteProfile: 'agentgate:delete-profile',
   copyProfileKey: 'agentgate:copy-profile-key',
   testProfile: 'agentgate:test-profile',
@@ -19,6 +24,12 @@ const CHANNELS = Object.freeze({
   stopGateway: 'agentgate:stop-gateway',
   reassignPort: 'agentgate:reassign-port',
   updateSettings: 'agentgate:update-settings',
+  listWallets: 'agentgate:list-wallets',
+  saveWallet: 'agentgate:save-wallet',
+  loginWallet: 'agentgate:login-wallet',
+  importWalletKeys: 'agentgate:import-wallet-keys',
+  deleteWallet: 'agentgate:delete-wallet',
+  checkWallet: 'agentgate:check-wallet',
   // 会话不进 bootstrap：扫一遍要翻上百个正文文件加两个 SQLite，开页面时再拉
   listSessions: 'agentgate:list-sessions',
   readSessionMessages: 'agentgate:read-session-messages',
@@ -42,6 +53,7 @@ const SessionIdSchema = z.string().min(3).max(200)
 const SessionIdsSchema = z.array(SessionIdSchema).min(1).max(200)
 /** 0 = 尽量多（主进程仍有硬上限）。 */
 const MessageLimitSchema = z.number().int().min(0).max(200).optional().default(30)
+const IMPORT_MODEL_DISCOVERY_BATCH_SIZE = 3
 
 const GatewayStopSchema = z.object({
   // 省略 = 放掉全部；给定子集 = 只放掉这几个
@@ -83,6 +95,8 @@ function registerIpcHandlers({
   updateService,
   requestMonitor,
   sessionService,
+  walletService,
+  walletLoginService,
   startupError,
   requestUpdateInstall,
 }) {
@@ -94,6 +108,7 @@ function registerIpcHandlers({
   }
   const readOnlyChannels = new Set([
     CHANNELS.bootstrap,
+    CHANNELS.listWallets,
     CHANNELS.listSessions,
     CHANNELS.readSessionMessages,
     CHANNELS.countSessionMessages,
@@ -108,9 +123,18 @@ function registerIpcHandlers({
       return handler(event, ...args)
     })
   }
+  const discoverImportedModels = async (rawIds) => {
+    const ids = [...new Set(Array.isArray(rawIds) ? rawIds.filter((id) => typeof id === 'string') : [])]
+    for (let index = 0; index < ids.length; index += IMPORT_MODEL_DISCOVERY_BATCH_SIZE) {
+      await Promise.allSettled(ids
+        .slice(index, index + IMPORT_MODEL_DISCOVERY_BATCH_SIZE)
+        .map((id) => healthService.test(id)))
+    }
+  }
   const getBootstrap = async () => {
-    const [profiles, history] = await Promise.all([
+    const [profiles, profileGroups, history] = await Promise.all([
       profileService.list(),
+      profileService.listGroups(),
       applyService.listHistory(),
     ])
     const scannedClients = await clientService.scan(profiles)
@@ -158,6 +182,7 @@ function registerIpcHandlers({
       }
     return {
       profiles,
+      profileGroups,
       clients,
       history,
       gateway,
@@ -177,7 +202,7 @@ function registerIpcHandlers({
     const parsed = SaveProfileSchema.safeParse(input)
     if (!parsed.success) throw new Error(validationMessage(parsed.error))
     const nextProfile = parsed.data
-    return applyService.withLifecycleLock(async ({ stopGateway }) => {
+    const saved = await applyService.withLifecycleLock(async ({ stopGateway }) => {
       const gatewayState = gatewayService.getPublicState()
       const existing = nextProfile.id
         ? (await profileService.list()).find((profile) => profile.id === nextProfile.id)
@@ -197,12 +222,29 @@ function registerIpcHandlers({
         if (routeSnapshot) await gatewayService.restoreRoutes(routeSnapshot).catch(() => {})
         throw error
       }
-      await gatewayService.refreshProfile(saved.id)
+      if (nextProfile.id) await gatewayService.refreshProfile(saved.id)
       return saved
     })
+    if (nextProfile.id) return saved
+
+    let discovered = saved
+    try {
+      discovered = await healthService.test(saved.id)
+    } catch {}
+    await gatewayService.refreshProfile(saved.id)
+    return discovered
   })
   handle(CHANNELS.duplicateProfile, (_event, id) => profileService.duplicate(id))
   handle(CHANNELS.reorderProfiles, (_event, ids) => profileService.reorder(ids))
+  handle(CHANNELS.createProfileGroup, (_event, name, profileIds) => (
+    profileService.createGroup(name, profileIds)
+  ))
+  handle(CHANNELS.renameProfileGroup, (_event, id, name) => profileService.renameGroup(id, name))
+  handle(CHANNELS.updateProfileGroupMembers, (_event, id, profileIds) => (
+    profileService.updateGroupMembers(id, profileIds)
+  ))
+  handle(CHANNELS.deleteProfileGroup, (_event, id) => profileService.deleteGroup(id))
+  handle(CHANNELS.organizeProfiles, (_event, input) => profileService.organize(input))
   handle(CHANNELS.deleteProfile, (_event, id) => {
     return applyService.withLifecycleLock(async ({ stopGateway }) => {
       const gatewayState = gatewayService.getPublicState()
@@ -292,6 +334,34 @@ function registerIpcHandlers({
   handle(CHANNELS.updateSettings, async (_event, patch) => {
     if (!settingsService) throw new Error('Application settings are unavailable')
     return settingsService.update(patch)
+  })
+  handle(CHANNELS.listWallets, async () => {
+    if (!walletService) throw new Error('Wallet service is unavailable')
+    return walletService.list()
+  })
+  handle(CHANNELS.saveWallet, async (_event, input) => {
+    if (!walletService) throw new Error('Wallet service is unavailable')
+    return walletService.save(input)
+  })
+  handle(CHANNELS.loginWallet, async (_event, id) => {
+    if (!walletLoginService) throw new Error('Wallet login is unavailable')
+    return walletLoginService.login(id)
+  })
+  handle(CHANNELS.importWalletKeys, async (_event, id, groupMode) => {
+    if (!walletService) throw new Error('Wallet service is unavailable')
+    const result = await walletService.importSub2ApiKeys(id, groupMode)
+    if (result.status !== 'complete') return result
+    await discoverImportedModels(result.profileIds)
+    const { profileIds: _profileIds, ...publicResult } = result
+    return publicResult
+  })
+  handle(CHANNELS.deleteWallet, async (_event, id) => {
+    if (!walletService) throw new Error('Wallet service is unavailable')
+    return walletService.delete(id)
+  })
+  handle(CHANNELS.checkWallet, async (_event, id) => {
+    if (!walletService) throw new Error('Wallet service is unavailable')
+    return walletService.check(id)
   })
   /*
    * 会话管理。删除是不可逆的，所以渲染进程只能递会话 id，删什么由主进程按各家的

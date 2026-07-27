@@ -28,6 +28,7 @@ import type {
   ClientTarget,
   Profile,
   ProfileEndpoint,
+  ProfileGroup,
   Protocol,
   SaveProfileInput,
 } from "../types";
@@ -35,6 +36,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 
 interface ProfileEditorProps {
   profile?: Profile;
+  groups: ProfileGroup[];
   busy: boolean;
   /** 正在识别模型。 */
   discovering?: boolean;
@@ -58,16 +60,18 @@ const ERROR_FIELD: Partial<Record<ValidationCode, string>> = {
   keyRequired: "key",
 };
 
-function createEditorInput(profile?: Profile): SaveProfileInput {
+function createEditorInput(profile?: Profile, defaultGroupId?: string): SaveProfileInput {
   if (!profile) {
     return {
       ...BLANK_PROFILE_INPUT,
+      groupId: defaultGroupId ?? null,
       endpoints: BLANK_PROFILE_INPUT.endpoints.map((endpoint) => ({ ...endpoint })),
       autoSwitch: { ...BLANK_PROFILE_INPUT.autoSwitch },
     };
   }
   return {
     id: profile.id,
+    groupId: profile.groupId ?? null,
     name: profile.name,
     protocol: profile.protocol,
     baseUrl: profile.baseUrl,
@@ -158,6 +162,7 @@ function endpointStatus(
  */
 export function ProfileEditor({
   profile,
+  groups,
   busy,
   discovering,
   onDiscoverModels,
@@ -165,7 +170,7 @@ export function ProfileEditor({
   onSave,
 }: ProfileEditorProps): ReactElement {
   const { m, fill } = useI18n();
-  const initialForm = useRef(createEditorInput(profile));
+  const initialForm = useRef(createEditorInput(profile, groups[0]?.id));
   const [form, setForm] = useState<SaveProfileInput>(() => initialForm.current);
   const formRef = useRef(form);
   const [showKey, setShowKey] = useState(false);
@@ -435,6 +440,18 @@ export function ProfileEditor({
                   <option value={protocol} key={protocol}>
                     {PROTOCOL_META[protocol].label}
                   </option>
+                ))}
+              </select>
+            </label>
+            <label className="field-block field-wide">
+              <span className="field-name">{m.keys.groupName}</span>
+              <select
+                value={form.groupId ?? ""}
+                onChange={(event) => update("groupId", event.target.value || null)}
+              >
+                <option value="">{m.keys.ungrouped}</option>
+                {groups.map((group) => (
+                  <option value={group.id} key={group.id}>{group.name}</option>
                 ))}
               </select>
             </label>

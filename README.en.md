@@ -10,7 +10,10 @@ A local API key manager and loopback gateway for Windows AI clients.
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2F78D0?style=flat-square)](#download)
 [![License](https://img.shields.io/github/license/trygn35-ui/agentgate?style=flat-square)](LICENSE)
 
-<img src="docs/images/overview.png" width="820" alt="Agent;Gate overview">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
+  <img src="docs/images/overview.png" width="820" alt="Agent;Gate overview">
+</picture>
 
 </div>
 
@@ -20,9 +23,10 @@ When you use several desktop AI clients and more than one API provider, the anno
 
 Agent;Gate keeps that work in one local Windows app:
 
-- Store API URLs, keys, models, and fallback endpoints as profiles.
+- Store API URLs, keys, models, and fallback endpoints as profiles, organized in collapsible groups.
 - Run one gateway for several clients while keeping an independent route for each client.
 - Point clients at `127.0.0.1` once, then switch profiles without rewriting their config every time.
+- Track relay balances and daily subscription quotas in a separate Wallet page, then import supported keys when needed.
 - Probe channels with the real key and show availability, latency, and recent results.
 - Watch live request state, TTFB/TTFC, token usage, and cache hits.
 - Browse and remove local sessions created by Claude Code, Codex, and OpenCode.
@@ -39,6 +43,12 @@ Agent;Gate is not a hosted service or a shared proxy. It has no account system, 
 | Gemini CLI | Experimental | Gemini |
 
 Experimental clients may change their configuration format. Agent;Gate limits edits to fields it owns and restores them when a client is released, but it is still worth checking the config after a major client update.
+
+## Wallet and key groups
+
+Wallet currently supports Sub2API, New API, and One API templates. Sub2API can sign in through an isolated browser window, refresh balances every 5 minutes, and show the real daily subscription allowance and its next reset time. Wallet totals stay separate from gateway request accounting; profiles are created only when you explicitly import keys.
+
+Imports create or reuse a group named after the wallet. Unsupported platforms are skipped, and a Sub2API account with more than 500 keys is rejected instead of partially imported. The Keys page can create, rename, delete, collapse, and expand groups, with immediate drag ordering for both groups and profiles.
 
 ## Channel status
 
@@ -90,6 +100,8 @@ Gemini CLI ──┘
 - The gateway listens on loopback only and is not exposed to the LAN.
 - Activity history stores request metadata, not prompts or response bodies.
 - Session management reads each client's own local store. Deletion is previewed first and cannot be undone.
+- Sub2API sign-in runs in a temporary Electron session limited to the target site and official OAuth HTTPS redirects. Cookies, cache, and authentication data are cleared when the window closes.
+- Imported wallet session tokens are encrypted with Windows DPAPI. If the site expires or revokes the refresh token, sign in again.
 
 Data lives under:
 
@@ -100,27 +112,64 @@ Data lives under:
 ├── gateway-recovery.json
 ├── settings.json
 ├── requests.json
+├── wallets.json
 └── window-state.json
 ```
 
 ## Screenshots
 
 <details open>
+<summary>Overview</summary>
+<br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
+  <img src="docs/images/overview.png" width="820" alt="Overview">
+</picture>
+</details>
+
+<details>
+<summary>Wallet</summary>
+<br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/wallet-dark.png">
+  <img src="docs/images/wallet.png" width="820" alt="Wallet">
+</picture>
+</details>
+
+<details>
 <summary>Key management</summary>
 <br>
-<img src="docs/images/keyring.png" width="820" alt="Key management">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/keyring-dark.png">
+  <img src="docs/images/keyring.png" width="820" alt="Key management">
+</picture>
+</details>
+
+<details>
+<summary>Channel status</summary>
+<br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/status-dark.png">
+  <img src="docs/images/status.png" width="820" alt="Channel status">
+</picture>
 </details>
 
 <details>
 <summary>Request activity</summary>
 <br>
-<img src="docs/images/activity.png" width="820" alt="Request activity">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/activity-dark.png">
+  <img src="docs/images/activity.png" width="820" alt="Request activity">
+</picture>
 </details>
 
 <details>
 <summary>Settings</summary>
 <br>
-<img src="docs/images/settings.png" width="820" alt="Settings">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-dark.png">
+  <img src="docs/images/settings.png" width="820" alt="Settings">
+</picture>
 </details>
 
 ## Development

@@ -52,6 +52,7 @@ const THEMES: Array<{ value: AppTheme; label: (m: Messages) => string; icon: Rea
 const LANGUAGES: AppLanguage[] = ["system", "zh", "zh-TW", "ja", "en"];
 
 interface SettingsViewProps {
+  active?: boolean;
   settings: AppSettings;
   busy: boolean;
   update?: UpdateState;
@@ -128,6 +129,7 @@ function UpdateRow({
 
 /** 设置页：启动与后台开关、语言、主题选择、软件更新和密钥安全说明。 */
 export function SettingsView({
+  active = true,
   settings,
   busy,
   update,
@@ -139,7 +141,7 @@ export function SettingsView({
 }: SettingsViewProps): ReactElement {
   const { m } = useI18n();
   return (
-    <main className="page-scroll" aria-label={m.config.title}>
+    <main className="page-scroll" aria-label={m.config.title} hidden={!active}>
       <div className="page-inner narrow">
         <div className="section-head rise">
           <h1>{m.config.title}</h1>

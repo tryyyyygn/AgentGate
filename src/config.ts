@@ -74,6 +74,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 export const EMPTY_BOOTSTRAP: BootstrapData = {
   profiles: [],
+  profileGroups: [],
   clients: [],
   history: [],
   gateway: {

@@ -179,7 +179,7 @@ describe("健康检测结果提交", () => {
 
     expect(models).toEqual(["gpt-draft"]);
     expect(profileService.getSecret).toHaveBeenCalledWith(id);
-    expect(String(fetchMock.mock.calls[0][0])).toBe(`${SECONDARY_URL}/v1/models`);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${SECONDARY_URL}/models`);
   });
 
   it("检测全部端点并分别写入可用模型", async () => {

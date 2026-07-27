@@ -1,4 +1,4 @@
-export type View = "overview" | "keyring" | "status" | "activity" | "sessions" | "settings";
+export type View = "overview" | "keyring" | "status" | "wallet" | "activity" | "sessions" | "settings";
 
 export type RequestFilter = "all" | "active" | "completed" | "failed";
 
@@ -6,6 +6,7 @@ export type BusyAction =
   | "load"
   | "save"
   | "duplicate"
+  | "group"
   | "apply"
   | "test"
   | "probe"

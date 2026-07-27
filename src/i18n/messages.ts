@@ -16,7 +16,7 @@
 export type Locale = "zh" | "zh-TW" | "ja" | "en";
 
 export interface Messages {
-  nav: { overview: string; keys: string; status: string; stream: string; config: string };
+  nav: { overview: string; keys: string; status: string; wallet: string; stream: string; config: string };
   status: {
     title: string;
     auto: string;
@@ -49,7 +49,6 @@ export interface Messages {
     lastCheck: string;
     checking: string;
     countdown: string;
-    sampleCount: string;
     action: string;
     noSamples: string;
     unsupported: string;
@@ -140,6 +139,73 @@ export interface Messages {
     limited: string;
     down: string;
     untested: string;
+    createGroup: string;
+    renameGroup: string;
+    deleteGroup: string;
+    groupName: string;
+    groupMembers: string;
+    groupNoKeys: string;
+    ungrouped: string;
+    moveGroup: string;
+    groupCount: string;
+    expandGroup: string;
+    collapseGroup: string;
+    deleteGroupTitle: string;
+    deleteGroupMessage: string;
+  };
+  wallet: {
+    title: string;
+    count: string;
+    checkAll: string;
+    check: string;
+    name: string;
+    namePlaceholder: string;
+    siteUrl: string;
+    apiKey: string;
+    keyKeepHint: string;
+    accountLogin: string;
+    notSignedIn: string;
+    loginExpired: string;
+    login: string;
+    relogin: string;
+    saveAndLogin: string;
+    loginSuccess: string;
+    importKeys: string;
+    importConflictTitle: string;
+    importConflictMessage: string;
+    importCreateGroup: string;
+    importExistingGroup: string;
+    importSuccess: string;
+    template: string;
+    balance: string;
+    threshold: string;
+    thresholdInvalid: string;
+    actions: string;
+    createTitle: string;
+    editTitle: string;
+    ok: string;
+    low: string;
+    empty: string;
+    unlimited: string;
+    error: string;
+    unchecked: string;
+    scopeKey: string;
+    scopeAccount: string;
+    scopeSite: string;
+    dailyUsage: string;
+    dailyUnlimited: string;
+    resetsAt: string;
+    daysRemaining: string;
+    moreSubscriptions: string;
+    loading: string;
+    loadError: string;
+    emptyTitle: string;
+    emptyHint: string;
+    deleteTitle: string;
+    deleteMessage: string;
+    saved: string;
+    deleted: string;
+    checkFailed: string;
   };
   stream: {
     title: string;
@@ -329,7 +395,7 @@ export interface Messages {
 }
 
 const zh: Messages = {
-  nav: { overview: "概览", keys: "密钥", status: "状态", stream: "动态", config: "设置" },
+  nav: { overview: "概览", keys: "密钥", status: "状态", wallet: "钱包", stream: "动态", config: "设置" },
   status: {
     title: "渠道状态",
     auto: "自动检测",
@@ -362,7 +428,6 @@ const zh: Messages = {
     lastCheck: "最近检测",
     checking: "检测中",
     countdown: "{seconds} 秒",
-    sampleCount: "{count} 次",
     action: "切换",
     noSamples: "等待首轮实测",
     unsupported: "当前版本不支持 Key 实测",
@@ -453,6 +518,73 @@ const zh: Messages = {
     limited: "受限",
     down: "异常",
     untested: "未测试",
+    createGroup: "新建分组",
+    renameGroup: "重命名分组",
+    deleteGroup: "删除分组",
+    groupName: "分组名称",
+    groupMembers: "分组密钥",
+    groupNoKeys: "当前没有可加入的密钥",
+    ungrouped: "未分组",
+    moveGroup: "拖动分组排序",
+    groupCount: "{count} 个密钥",
+    expandGroup: "展开分组「{name}」",
+    collapseGroup: "收起分组「{name}」",
+    deleteGroupTitle: "删除分组「{name}」？",
+    deleteGroupMessage: "分组内的密钥会移到“未分组”，密钥本身不会删除。",
+  },
+  wallet: {
+    title: "钱包",
+    count: "{count} 个站点",
+    checkAll: "检测全部",
+    check: "检测余额",
+    name: "名称",
+    namePlaceholder: "例如：主力余额",
+    siteUrl: "站点 URL",
+    apiKey: "API Key",
+    keyKeepHint: "留空保留 {hint}",
+    accountLogin: "账户登录",
+    notSignedIn: "未登录",
+    loginExpired: "登录已过期",
+    login: "登录站点",
+    relogin: "重新登录",
+    saveAndLogin: "保存并登录",
+    loginSuccess: "已登录「{name}」",
+    importKeys: "导入密钥",
+    importConflictTitle: "已有同名分组",
+    importConflictMessage: "已存在名为「{name}」的分组。将密钥加入该分组，还是另建一个分组？",
+    importCreateGroup: "另建分组",
+    importExistingGroup: "加入已有分组",
+    importSuccess: "已导入至「{group}」：新增 {imported}，已有 {reused}，跳过 {skipped}",
+    template: "模板",
+    balance: "余额",
+    threshold: "低额阈值",
+    thresholdInvalid: "低额阈值必须是大于或等于 0 的数字",
+    actions: "操作",
+    createTitle: "新建钱包",
+    editTitle: "编辑 · {name}",
+    ok: "正常",
+    low: "余额偏低",
+    empty: "已用完",
+    unlimited: "无限额",
+    error: "检测失败",
+    unchecked: "未检测",
+    scopeKey: "Key 额度",
+    scopeAccount: "账户额度",
+    scopeSite: "站点额度",
+    dailyUsage: "今日 {used} / {limit}",
+    dailyUnlimited: "今日 {used} / 不限额",
+    resetsAt: "{time} 重置",
+    daysRemaining: "剩 {days} 天",
+    moreSubscriptions: "+{count}",
+    loading: "正在读取钱包",
+    loadError: "无法读取钱包",
+    emptyTitle: "还没有钱包",
+    emptyHint: "添加第一个余额查询站点",
+    deleteTitle: "删除「{name}」？",
+    deleteMessage: "只会删除这条钱包记录，不会修改密钥方案或网关配置。",
+    saved: "已保存「{name}」",
+    deleted: "已删除「{name}」",
+    checkFailed: "余额检测失败：{message}",
   },
   stream: {
     title: "动态",
@@ -643,7 +775,7 @@ const zh: Messages = {
 };
 
 const zhTW: Messages = {
-  nav: { overview: "總覽", keys: "API Key", status: "狀態", stream: "動態", config: "設定" },
+  nav: { overview: "總覽", keys: "API Key", status: "狀態", wallet: "錢包", stream: "動態", config: "設定" },
   status: {
     title: "Channel Status",
     auto: "自動檢測",
@@ -676,7 +808,6 @@ const zhTW: Messages = {
     lastCheck: "最近檢測",
     checking: "檢測中",
     countdown: "{seconds} 秒",
-    sampleCount: "{count} 次",
     action: "切換",
     noSamples: "等待第一輪實測",
     unsupported: "目前版本不支援 Key 實測",
@@ -767,6 +898,73 @@ const zhTW: Messages = {
     limited: "受限",
     down: "異常",
     untested: "未測",
+    createGroup: "新增分組",
+    renameGroup: "重新命名分組",
+    deleteGroup: "刪除分組",
+    groupName: "分組名稱",
+    groupMembers: "分組 Key",
+    groupNoKeys: "目前沒有可加入的 Key",
+    ungrouped: "未分組",
+    moveGroup: "拖曳分組排序",
+    groupCount: "{count} 個 Key",
+    expandGroup: "展開分組「{name}」",
+    collapseGroup: "收起分組「{name}」",
+    deleteGroupTitle: "刪除分組「{name}」？",
+    deleteGroupMessage: "分組內的 Key 會移到「未分組」，Key 本身不會刪除。",
+  },
+  wallet: {
+    title: "錢包",
+    count: "{count} 個站點",
+    checkAll: "全部檢測",
+    check: "檢測餘額",
+    name: "名稱",
+    namePlaceholder: "例如：主力餘額",
+    siteUrl: "站點 URL",
+    apiKey: "API Key",
+    keyKeepHint: "留白保留 {hint}",
+    accountLogin: "帳號登入",
+    notSignedIn: "未登入",
+    loginExpired: "登入已過期",
+    login: "登入站點",
+    relogin: "重新登入",
+    saveAndLogin: "儲存並登入",
+    loginSuccess: "已登入「{name}」",
+    importKeys: "匯入 Key",
+    importConflictTitle: "已有同名分組",
+    importConflictMessage: "已存在名為「{name}」的分組。要加入該分組，還是另建一個分組？",
+    importCreateGroup: "另建分組",
+    importExistingGroup: "加入現有分組",
+    importSuccess: "已匯入至「{group}」：新增 {imported}、已有 {reused}、略過 {skipped}",
+    template: "模板",
+    balance: "餘額",
+    threshold: "低額門檻",
+    thresholdInvalid: "低額門檻必須是大於或等於 0 的數字",
+    actions: "操作",
+    createTitle: "新增錢包",
+    editTitle: "編輯 · {name}",
+    ok: "正常",
+    low: "餘額偏低",
+    empty: "已用完",
+    unlimited: "無上限",
+    error: "檢測失敗",
+    unchecked: "未檢測",
+    scopeKey: "Key 額度",
+    scopeAccount: "帳號額度",
+    scopeSite: "站點額度",
+    dailyUsage: "今日 {used} / {limit}",
+    dailyUnlimited: "今日 {used} / 無上限",
+    resetsAt: "{time} 重置",
+    daysRemaining: "剩 {days} 天",
+    moreSubscriptions: "+{count}",
+    loading: "讀取錢包中",
+    loadError: "無法讀取錢包",
+    emptyTitle: "還沒有錢包",
+    emptyHint: "加入第一個餘額查詢站點",
+    deleteTitle: "刪除「{name}」？",
+    deleteMessage: "只會刪除這筆錢包紀錄，不會修改 API Key Profile 或 Gateway 設定。",
+    saved: "已儲存「{name}」",
+    deleted: "已刪除「{name}」",
+    checkFailed: "餘額檢測失敗：{message}",
   },
   stream: {
     title: "動態",
@@ -957,7 +1155,7 @@ const zhTW: Messages = {
 };
 
 const ja: Messages = {
-  nav: { overview: "概要", keys: "API キー", status: "状態", stream: "ストリーム", config: "設定" },
+  nav: { overview: "概要", keys: "API キー", status: "状態", wallet: "ウォレット", stream: "ストリーム", config: "設定" },
   status: {
     title: "チャネル状態",
     auto: "自動チェック",
@@ -990,7 +1188,6 @@ const ja: Messages = {
     lastCheck: "最終チェック",
     checking: "チェック中",
     countdown: "{seconds} 秒",
-    sampleCount: "{count} 回",
     action: "切替",
     noSamples: "初回チェック待ち",
     unsupported: "このバージョンでは Key 実測に未対応",
@@ -1081,6 +1278,73 @@ const ja: Messages = {
     limited: "制限あり",
     down: "異常",
     untested: "未計測",
+    createGroup: "グループを追加",
+    renameGroup: "グループ名を変更",
+    deleteGroup: "グループを削除",
+    groupName: "グループ名",
+    groupMembers: "グループのキー",
+    groupNoKeys: "追加できるキーがありません",
+    ungrouped: "未分類",
+    moveGroup: "ドラッグしてグループを並べ替え",
+    groupCount: "キー {count} 件",
+    expandGroup: "グループ「{name}」を展開",
+    collapseGroup: "グループ「{name}」を折りたたむ",
+    deleteGroupTitle: "グループ「{name}」を削除しますか？",
+    deleteGroupMessage: "グループ内のキーは「未分類」に移動し、キー自体は削除されません。",
+  },
+  wallet: {
+    title: "ウォレット",
+    count: "{count} サイト",
+    checkAll: "一括確認",
+    check: "残高を確認",
+    name: "名前",
+    namePlaceholder: "例：メイン残高",
+    siteUrl: "サイト URL",
+    apiKey: "API キー",
+    keyKeepHint: "空欄で {hint} を維持",
+    accountLogin: "アカウントログイン",
+    notSignedIn: "未ログイン",
+    loginExpired: "ログイン期限切れ",
+    login: "サイトにログイン",
+    relogin: "再ログイン",
+    saveAndLogin: "保存してログイン",
+    loginSuccess: "「{name}」にログインしました",
+    importKeys: "キーを取り込む",
+    importConflictTitle: "同名グループがあります",
+    importConflictMessage: "「{name}」グループは既にあります。そこへ追加するか、別グループを作成してください。",
+    importCreateGroup: "別グループを作成",
+    importExistingGroup: "既存グループへ追加",
+    importSuccess: "「{group}」へ取込完了：新規 {imported}、既存 {reused}、スキップ {skipped}",
+    template: "テンプレート",
+    balance: "残高",
+    threshold: "残高警告値",
+    thresholdInvalid: "残高警告値には 0 以上の数値を入力してください",
+    actions: "操作",
+    createTitle: "ウォレットを追加",
+    editTitle: "編集 · {name}",
+    ok: "正常",
+    low: "残高低下",
+    empty: "残高なし",
+    unlimited: "無制限",
+    error: "確認失敗",
+    unchecked: "未確認",
+    scopeKey: "キー残高",
+    scopeAccount: "アカウント残高",
+    scopeSite: "サイト残高",
+    dailyUsage: "本日 {used} / {limit}",
+    dailyUnlimited: "本日 {used} / 無制限",
+    resetsAt: "{time} にリセット",
+    daysRemaining: "残り {days} 日",
+    moreSubscriptions: "+{count}",
+    loading: "ウォレットを読込中",
+    loadError: "ウォレットを読み込めません",
+    emptyTitle: "ウォレットなし",
+    emptyHint: "残高を確認するサイトを追加してください",
+    deleteTitle: "「{name}」を削除しますか？",
+    deleteMessage: "このウォレットだけを削除します。プロファイルやゲートウェイ設定は変更しません。",
+    saved: "「{name}」を保存しました",
+    deleted: "「{name}」を削除しました",
+    checkFailed: "残高確認に失敗：{message}",
   },
   stream: {
     title: "ストリーム",
@@ -1271,7 +1535,7 @@ const ja: Messages = {
 };
 
 const en: Messages = {
-  nav: { overview: "OVERVIEW", keys: "KEYS", status: "STATUS", stream: "STREAM", config: "CONFIG" },
+  nav: { overview: "OVERVIEW", keys: "KEYS", status: "STATUS", wallet: "WALLET", stream: "STREAM", config: "CONFIG" },
   status: {
     title: "CHANNEL STATUS",
     auto: "AUTO PROBE",
@@ -1304,7 +1568,6 @@ const en: Messages = {
     lastCheck: "LAST PROBE",
     checking: "PROBING",
     countdown: "{seconds}s",
-    sampleCount: "{count} samples",
     action: "SWITCH",
     noSamples: "AWAITING FIRST PROBE",
     unsupported: "Key probing is not available in this build",
@@ -1395,6 +1658,73 @@ const en: Messages = {
     limited: "LIMITED",
     down: "DOWN",
     untested: "———",
+    createGroup: "NEW GROUP",
+    renameGroup: "RENAME GROUP",
+    deleteGroup: "DELETE GROUP",
+    groupName: "GROUP NAME",
+    groupMembers: "GROUP KEYS",
+    groupNoKeys: "No keys available",
+    ungrouped: "UNGROUPED",
+    moveGroup: "Drag to reorder group",
+    groupCount: "{count} keys",
+    expandGroup: "Expand group {name}",
+    collapseGroup: "Collapse group {name}",
+    deleteGroupTitle: "Delete group “{name}”?",
+    deleteGroupMessage: "Keys in this group move to Ungrouped. The keys themselves are not deleted.",
+  },
+  wallet: {
+    title: "Wallet",
+    count: "{count} sites",
+    checkAll: "Check all",
+    check: "Check balance",
+    name: "Name",
+    namePlaceholder: "e.g. Primary balance",
+    siteUrl: "Site URL",
+    apiKey: "API key",
+    keyKeepHint: "Leave blank to keep {hint}",
+    accountLogin: "Account login",
+    notSignedIn: "Not signed in",
+    loginExpired: "Login expired",
+    login: "Sign in",
+    relogin: "Sign in again",
+    saveAndLogin: "Save and sign in",
+    loginSuccess: "Signed in to “{name}”",
+    importKeys: "Import keys",
+    importConflictTitle: "Group already exists",
+    importConflictMessage: "A group named “{name}” already exists. Add the keys there or create a separate group?",
+    importCreateGroup: "Create separate group",
+    importExistingGroup: "Add to existing group",
+    importSuccess: "Imported into “{group}”: {imported} new, {reused} existing, {skipped} skipped",
+    template: "Template",
+    balance: "Balance",
+    threshold: "Low threshold",
+    thresholdInvalid: "Low threshold must be a number greater than or equal to 0",
+    actions: "Actions",
+    createTitle: "Add wallet",
+    editTitle: "Edit · {name}",
+    ok: "Available",
+    low: "Low balance",
+    empty: "Depleted",
+    unlimited: "Unlimited",
+    error: "Check failed",
+    unchecked: "Unchecked",
+    scopeKey: "Key balance",
+    scopeAccount: "Account balance",
+    scopeSite: "Site balance",
+    dailyUsage: "Today {used} / {limit}",
+    dailyUnlimited: "Today {used} / unlimited",
+    resetsAt: "Resets {time}",
+    daysRemaining: "{days}d left",
+    moreSubscriptions: "+{count}",
+    loading: "Loading wallets",
+    loadError: "Could not load wallets",
+    emptyTitle: "No wallets yet",
+    emptyHint: "Add a site to start checking its balance",
+    deleteTitle: "Delete “{name}”?",
+    deleteMessage: "This only removes the wallet entry. Profiles and gateway settings stay unchanged.",
+    saved: "Saved “{name}”",
+    deleted: "Deleted “{name}”",
+    checkFailed: "Balance check failed: {message}",
   },
   stream: {
     title: "Stream",

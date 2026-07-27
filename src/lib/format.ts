@@ -44,6 +44,14 @@ export function formatDateTime(value: string, locale: string): string {
   }).format(date);
 }
 
+/** 将精确时间固定显示为紧凑的 M/D HH:mm:ss。 */
+export function formatCompactDateTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "--";
+  const twoDigits = (part: number): string => String(part).padStart(2, "0");
+  return `${date.getMonth() + 1}/${date.getDate()} ${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}:${twoDigits(date.getSeconds())}`;
+}
+
 /**
  * 将未知异常转换为可展示文本，避免界面直接依赖异常类型。
  *

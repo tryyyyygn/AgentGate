@@ -10,7 +10,10 @@ Windows のデスクトップ AI クライアント向け、ローカル API キ
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2F78D0?style=flat-square)](#ダウンロード)
 [![License](https://img.shields.io/github/license/trygn35-ui/agentgate?style=flat-square)](LICENSE)
 
-<img src="docs/images/overview.png" width="820" alt="Agent;Gate 概要">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
+  <img src="docs/images/overview.png" width="820" alt="Agent;Gate 概要">
+</picture>
 
 </div>
 
@@ -20,9 +23,10 @@ Codex、Claude Code、OpenCode、Gemini CLI を併用し、API や中継サー�
 
 Agent;Gate は、その作業をローカルの Windows アプリにまとめます。
 
-- API URL、キー、モデル、予備エンドポイントをプロファイルとして保存。
+- API URL、キー、モデル、予備エンドポイントをプロファイルとして保存し、折りたたみ可能なグループで整理。
 - 1 つのゲートウェイで複数クライアントを処理し、クライアントごとに別のルートとキーを使用。
 - クライアント側は一度 `127.0.0.1` に向ければ、以後の切り替えで設定ファイルを何度も編集しない。
+- 独立したウォレットページで中継サービスの残高と日次サブスクリプション上限を確認し、必要なキーだけを取り込む。
 - 実際のキーで最小リクエストを定期送信し、可用率、レイテンシ、直近の結果を表示。
 - リクエスト状態、TTFB/TTFC、Token、キャッシュヒットをリアルタイム表示。
 - Claude Code、Codex、OpenCode がローカルに残したセッションを閲覧・削除。
@@ -39,6 +43,12 @@ Agent;Gate は、その作業をローカルの Windows アプリにまとめま
 | Gemini CLI | 実験的 | Gemini |
 
 「実験的」は、クライアント側の設定形式が今後変わる可能性があるという意味です。Agent;Gate は管理対象のフィールドだけを書き換え、解除時に戻しますが、クライアントの大型アップデート後は設定を一度確認してください。
+
+## ウォレットとキーグループ
+
+ウォレットは現在 Sub2API、New API、One API テンプレートに対応しています。Sub2API は隔離されたログインウィンドウからサインインでき、残高を 5 分ごとに更新し、実際の日次サブスクリプション上限と次回リセット時刻を表示します。ウォレットの集計はゲートウェイのリクエスト統計から独立しており、明示的にインポートしたときだけプロファイルを作成します。
+
+インポート時はウォレット名のグループを作成または再利用します。未対応のプラットフォームはスキップし、Sub2API アカウントに 500 個を超えるキーがある場合は部分的に取り込まず拒否します。キー画面ではグループの作成、名前変更、削除、展開、折りたたみと、グループ・プロファイルの即時ドラッグ並べ替えができます。
 
 ## チャネル状態
 
@@ -90,6 +100,8 @@ Gemini CLI ──┘
 - ゲートウェイはループバックだけで待ち受け、LAN には公開しない。
 - アクティビティ履歴に保存するのはメタデータだけ。プロンプトや応答本文は保存しない。
 - セッション管理は各クライアントのローカル DB を直接読み取る。削除前に対象を表示し、削除後の復元は不可。
+- Sub2API のサインインは、対象サイトと公式 OAuth の HTTPS リダイレクトだけを許可した一時 Electron セッションで実行。ウィンドウを閉じると Cookie、キャッシュ、認証データを消去。
+- 取り込んだウォレットのセッショントークンは Windows DPAPI で暗号化。Refresh Token が期限切れまたは失効した場合は再ログインが必要。
 
 データディレクトリ：
 
@@ -100,27 +112,64 @@ Gemini CLI ──┘
 ├── gateway-recovery.json
 ├── settings.json
 ├── requests.json
+├── wallets.json
 └── window-state.json
 ```
 
 ## スクリーンショット
 
 <details open>
+<summary>概要</summary>
+<br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
+  <img src="docs/images/overview.png" width="820" alt="概要">
+</picture>
+</details>
+
+<details>
+<summary>ウォレット</summary>
+<br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/wallet-dark.png">
+  <img src="docs/images/wallet.png" width="820" alt="ウォレット">
+</picture>
+</details>
+
+<details>
 <summary>キー管理</summary>
 <br>
-<img src="docs/images/keyring.png" width="820" alt="キー管理">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/keyring-dark.png">
+  <img src="docs/images/keyring.png" width="820" alt="キー管理">
+</picture>
+</details>
+
+<details>
+<summary>チャネル状態</summary>
+<br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/status-dark.png">
+  <img src="docs/images/status.png" width="820" alt="チャネル状態">
+</picture>
 </details>
 
 <details>
 <summary>リクエスト履歴</summary>
 <br>
-<img src="docs/images/activity.png" width="820" alt="リクエスト履歴">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/activity-dark.png">
+  <img src="docs/images/activity.png" width="820" alt="リクエスト履歴">
+</picture>
 </details>
 
 <details>
 <summary>設定</summary>
 <br>
-<img src="docs/images/settings.png" width="820" alt="設定">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-dark.png">
+  <img src="docs/images/settings.png" width="820" alt="設定">
+</picture>
 </details>
 
 ## 開発

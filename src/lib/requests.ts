@@ -25,10 +25,14 @@ export function mergeActiveRequests(
   if (patch.length === 0 && removedIds.length === 0) return current;
   const fresh = new Map(patch.map((request) => [request.id, request]));
   const removed = new Set(removedIds);
-  const merged = current
-    .filter((request) => !removed.has(request.id))
-    .map((request) => fresh.get(request.id) ?? request);
-  const known = new Set(merged.map((request) => request.id));
+  const merged: ActiveRequest[] = [];
+  const known = new Set<string>();
+  for (const request of current) {
+    if (removed.has(request.id)) continue;
+    const replacement = fresh.get(request.id);
+    merged.push(replacement ?? request);
+    known.add(request.id);
+  }
   for (const request of patch) {
     if (removed.has(request.id) || known.has(request.id)) continue;
     // bootstrap 与 start 事件交错时，新行可能是未知 ID；按开始时间插入，

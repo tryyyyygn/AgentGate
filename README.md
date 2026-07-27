@@ -10,7 +10,10 @@
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2F78D0?style=flat-square)](#下载)
 [![License](https://img.shields.io/github/license/trygn35-ui/agentgate?style=flat-square)](LICENSE)
 
-<img src="docs/images/overview.png" width="820" alt="Agent;Gate 概览">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
+  <img src="docs/images/overview.png" width="820" alt="Agent;Gate 概览">
+</picture>
 
 </div>
 
@@ -20,9 +23,10 @@
 
 Agent;Gate 把这些事情收在一个本地应用里：
 
-- 保存多组 API URL、Key、模型和备用端点。
+- 保存多组 API URL、Key、模型和备用端点，并用可折叠分组整理它们。
 - 一个网关同时服务多个客户端，每个客户端有自己的路由，可以使用不同密钥。
 - 客户端只连接 `127.0.0.1`，切换密钥时不必反复改客户端配置。
+- 在独立钱包页查看中转站余额和每日订阅额度，并按需导入可用 Key。
 - 用真实 Key 定时发送最小请求，查看可用率、耗时和最近检测记录。
 - 实时查看请求状态、TTFB/TTFC、Token 与缓存命中。
 - 浏览和删除 Claude Code、Codex、OpenCode 留在本机的会话。
@@ -39,6 +43,12 @@ Agent;Gate 把这些事情收在一个本地应用里：
 | Gemini CLI | 实验性 | Gemini |
 
 “实验性”表示这些客户端的配置格式仍可能变化。Agent;Gate 会尽量只修改自己负责的字段，并在断开接管时恢复，但升级客户端后仍建议先检查一次配置。
+
+## 钱包与密钥分组
+
+钱包目前支持 Sub2API、New API 和 One API 模板。Sub2API 可以在隔离的登录窗口里完成网页登录，余额每 5 分钟刷新，并显示真实的每日订阅额度和下一次重置时间。钱包统计与网关请求统计相互独立，只有点击导入时才会把支持的 Codex/OpenAI 或 Claude/Anthropic Key 写入密钥页。
+
+导入时会按钱包名称创建或选择分组；不支持的平台会跳过，单个 Sub2API 账号超过 500 把 Key 时会直接拒绝导入。密钥页支持创建、重命名、删除、展开和收起分组，也可以拖动分组或方案即时调整顺序。
 
 ## 渠道状态
 
@@ -90,6 +100,8 @@ Gemini CLI ──┘
 - 网关只监听回环地址，不向局域网开放。
 - 动态记录只保存请求元数据，不保存提示词、回复正文或会话内容。
 - 会话页直接读取各客户端自己的本地数据库；删除前会展示计划，删除不可恢复。
+- Sub2API 登录使用独立的临时 Electron 会话，只允许目标站点和官方 OAuth HTTPS 跳转；窗口关闭后会清理 Cookie、缓存和认证数据。
+- 导入的钱包会话令牌使用 Windows DPAPI 加密。Refresh Token 过期或被站点撤销后，需要重新登录。
 
 数据目录：
 
@@ -100,27 +112,64 @@ Gemini CLI ──┘
 ├── gateway-recovery.json
 ├── settings.json
 ├── requests.json
+├── wallets.json
 └── window-state.json
 ```
 
 ## 截图
 
 <details open>
+<summary>概览</summary>
+<br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
+  <img src="docs/images/overview.png" width="820" alt="概览">
+</picture>
+</details>
+
+<details>
+<summary>钱包</summary>
+<br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/wallet-dark.png">
+  <img src="docs/images/wallet.png" width="820" alt="钱包">
+</picture>
+</details>
+
+<details>
 <summary>密钥管理</summary>
 <br>
-<img src="docs/images/keyring.png" width="820" alt="密钥管理">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/keyring-dark.png">
+  <img src="docs/images/keyring.png" width="820" alt="密钥管理">
+</picture>
+</details>
+
+<details>
+<summary>渠道状态</summary>
+<br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/status-dark.png">
+  <img src="docs/images/status.png" width="820" alt="渠道状态">
+</picture>
 </details>
 
 <details>
 <summary>请求动态</summary>
 <br>
-<img src="docs/images/activity.png" width="820" alt="请求动态">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/activity-dark.png">
+  <img src="docs/images/activity.png" width="820" alt="请求动态">
+</picture>
 </details>
 
 <details>
 <summary>设置</summary>
 <br>
-<img src="docs/images/settings.png" width="820" alt="设置">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-dark.png">
+  <img src="docs/images/settings.png" width="820" alt="设置">
+</picture>
 </details>
 
 ## 开发

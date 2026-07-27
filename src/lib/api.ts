@@ -11,9 +11,15 @@ import type {
   HistoryEntry,
   AgentGateBridge,
   Profile,
+  ProfileGroup,
+  ProfileOrganizationInput,
   SaveProfileInput,
   AppSettings,
   HealthSample,
+  SaveWalletInput,
+  Wallet,
+  WalletKeyImportGroupMode,
+  WalletKeyImportResult,
 } from "../types";
 import { DEFAULT_SETTINGS } from "../config";
 
@@ -37,9 +43,25 @@ const healthData = (baseLatency: number, failedAt: number[] = []) => {
   return { healthHistory: healthTimeline.slice(-30), healthTimeline };
 };
 
+const MOCK_GROUP_MAIN = "00000000-0000-4000-8000-000000000101";
+const MOCK_GROUP_LABS = "00000000-0000-4000-8000-000000000102";
+
+let mockProfileGroups: ProfileGroup[] = [{
+  id: MOCK_GROUP_MAIN,
+  name: "日常渠道",
+  createdAt: minutesAgo(2_500),
+  updatedAt: minutesAgo(18),
+}, {
+  id: MOCK_GROUP_LABS,
+  name: "实验渠道",
+  createdAt: minutesAgo(1_000),
+  updatedAt: minutesAgo(90),
+}];
+
 let mockProfiles: Profile[] = [
   {
     id: "relay-a",
+    groupId: MOCK_GROUP_MAIN,
     name: "主力中转",
     protocol: "anthropic",
     baseUrl: "https://api.relay-a.example",
@@ -78,6 +100,7 @@ let mockProfiles: Profile[] = [
   },
   {
     id: "openai-main",
+    groupId: MOCK_GROUP_MAIN,
     name: "Codex 日常",
     protocol: "openai-responses",
     baseUrl: "https://gateway.work.example/v1",
@@ -106,6 +129,7 @@ let mockProfiles: Profile[] = [
   },
   {
     id: "gemini-fast",
+    groupId: MOCK_GROUP_LABS,
     name: "Gemini 快速",
     protocol: "gemini",
     baseUrl: "https://generativelanguage.googleapis.com",
@@ -122,6 +146,68 @@ let mockProfiles: Profile[] = [
     createdAt: minutesAgo(900),
     updatedAt: minutesAgo(90),
     health: { status: "unknown" },
+  },
+];
+
+let mockWallets: Wallet[] = [
+  {
+    id: "00000000-0000-4000-8000-000000000201",
+    name: "主力余额",
+    siteUrl: "https://api.relay-a.example",
+    template: "sub2api",
+    credentialKind: "session",
+    credentialStatus: "ready",
+    credentialHint: "demo@relay-a.example",
+    lowBalanceUsd: 5,
+    createdAt: minutesAgo(1_400),
+    updatedAt: minutesAgo(12),
+    balance: {
+      status: "ok",
+      scope: "account",
+      remainingUsd: 42.68,
+      checkedAt: minutesAgo(4),
+      plan: "钱包余额",
+      subscriptions: [{
+        id: 1,
+        name: "30刀订阅",
+        dailyUsedUsd: 4.43,
+        dailyLimitUsd: 30,
+        expiresAt: new Date(Date.now() + 8 * 24 * 60 * 60_000).toISOString(),
+        resetsAt: new Date(Date.now() + 20 * 60 * 60_000).toISOString(),
+      }],
+    },
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000202",
+    name: "Codex 备用站",
+    siteUrl: "https://gateway.work.example",
+    template: "new-api",
+    credentialKind: "api-key",
+    credentialStatus: "ready",
+    credentialHint: "•••• 71C3",
+    lowBalanceUsd: 8,
+    createdAt: minutesAgo(920),
+    updatedAt: minutesAgo(31),
+    balance: {
+      status: "low",
+      scope: "key",
+      remainingUsd: 3.72,
+      totalUsd: 25,
+      usedUsd: 21.28,
+      checkedAt: minutesAgo(7),
+    },
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000203",
+    name: "旧站余额",
+    siteUrl: "https://one.example",
+    template: "one-api",
+    credentialKind: "api-key",
+    credentialStatus: "ready",
+    credentialHint: "•••• 90A1",
+    lowBalanceUsd: 3,
+    createdAt: minutesAgo(610),
+    updatedAt: minutesAgo(45),
   },
 ];
 
@@ -255,6 +341,13 @@ const mockRequests = [
 
 const clone = <T,>(value: T): T => structuredClone(value);
 
+function getMockWalletCredentialHint(input: SaveWalletInput, existing?: Wallet): string | undefined {
+  if (input.template === "sub2api") return existing?.credentialHint;
+  const apiKey = input.apiKey?.trim();
+  if (apiKey) return `•••• ${apiKey.slice(-4).toUpperCase()}`;
+  return existing?.credentialHint ?? "•••• NEW";
+}
+
 function getMockKeyHint(input: SaveProfileInput, existing?: Profile): string {
   const apiKey = input.apiKey?.trim();
   if (apiKey) return `•••• ${apiKey.slice(-4).toUpperCase()}`;
@@ -329,6 +422,7 @@ const mockBridge: AgentGateBridge = {
   async getBootstrap(): Promise<BootstrapData> {
     return clone({
       profiles: mockProfiles,
+      profileGroups: mockProfileGroups,
       clients: mockClients,
       history: mockHistory,
       gateway: mockGateway,
@@ -350,6 +444,7 @@ const mockBridge: AgentGateBridge = {
       ?? endpoints[0];
     const profile: Profile = {
       ...input,
+      groupId: input.groupId === undefined ? existing?.groupId : input.groupId ?? undefined,
       baseUrl: activeEndpoint.url,
       endpoints,
       availableModels: activeEndpoint.models,
@@ -368,7 +463,7 @@ const mockBridge: AgentGateBridge = {
     } else {
       mockProfiles = [profile, ...mockProfiles];
     }
-    return clone(profile);
+    return existing ? clone(profile) : mockBridge.testProfile!(profile.id);
   },
 
   async reorderProfiles(ids: string[]) {
@@ -385,6 +480,73 @@ const mockBridge: AgentGateBridge = {
     }
     mockProfiles = ordered;
     return clone(mockProfiles);
+  },
+
+  async createProfileGroup(name: string, profileIds: string[]) {
+    if (mockProfileGroups.some((group) => group.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      throw new Error("分组名称已存在");
+    }
+    const timestamp = new Date().toISOString();
+    const group: ProfileGroup = {
+      id: crypto.randomUUID(),
+      name,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const selected = new Set(profileIds);
+    mockProfileGroups = [...mockProfileGroups, group];
+    mockProfiles = mockProfiles.map((profile) => selected.has(profile.id)
+      ? { ...profile, groupId: group.id }
+      : profile);
+    return clone(group);
+  },
+
+  async renameProfileGroup(id: string, name: string) {
+    const group = mockProfileGroups.find((item) => item.id === id);
+    if (!group) throw new Error("分组不存在");
+    const updated = { ...group, name, updatedAt: new Date().toISOString() };
+    mockProfileGroups = mockProfileGroups.map((item) => item.id === id ? updated : item);
+    return clone(updated);
+  },
+
+  async updateProfileGroupMembers(id: string, profileIds: string[]) {
+    const selected = new Set(profileIds);
+    mockProfiles = mockProfiles.map((profile) => {
+      if (selected.has(profile.id)) return { ...profile, groupId: id };
+      if (profile.groupId !== id) return profile;
+      const { groupId: _groupId, ...ungrouped } = profile;
+      return ungrouped;
+    });
+    return clone(mockProfiles);
+  },
+
+  async deleteProfileGroup(id: string) {
+    mockProfileGroups = mockProfileGroups.filter((group) => group.id !== id);
+    mockProfiles = mockProfiles.map((profile) => {
+      if (profile.groupId !== id) return profile;
+      const { groupId: _groupId, ...ungrouped } = profile;
+      return ungrouped;
+    });
+    return { ok: true };
+  },
+
+  async organizeProfiles(input: ProfileOrganizationInput) {
+    const groups = new Map(mockProfileGroups.map((group) => [group.id, group]));
+    mockProfileGroups = [
+      ...input.groupIds.map((id) => groups.get(id)).filter((group): group is ProfileGroup => Boolean(group)),
+      ...mockProfileGroups.filter((group) => !input.groupIds.includes(group.id)),
+    ];
+    const profiles = new Map(mockProfiles.map((profile) => [profile.id, profile]));
+    mockProfiles = [
+      ...input.profiles.map(({ id, groupId }) => {
+        const profile = profiles.get(id);
+        if (!profile) return undefined;
+        profiles.delete(id);
+        return { ...profile, groupId: groupId ?? undefined };
+      }).filter((profile) => profile !== undefined),
+      ...mockProfiles.filter((profile) => profiles.has(profile.id)),
+    ];
+    return clone({ groups: mockProfileGroups, profiles: mockProfiles });
   },
 
   async duplicateProfile(id: string) {
@@ -441,6 +603,7 @@ const mockBridge: AgentGateBridge = {
       ...source,
       endpoints,
       availableModels: activeEndpoint.models,
+      model: source.model || activeEndpoint.models[0] || "",
       health: activeEndpoint.health,
       modelsCheckedAt: checkedAt,
     };
@@ -636,6 +799,167 @@ const mockBridge: AgentGateBridge = {
   async updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
     mockSettings = { ...mockSettings, ...patch };
     return clone(mockSettings);
+  },
+
+  async listWallets(): Promise<Wallet[]> {
+    return clone(mockWallets);
+  },
+
+  async saveWallet(input: SaveWalletInput): Promise<Wallet> {
+    const existing = input.id ? mockWallets.find((wallet) => wallet.id === input.id) : undefined;
+    const timestamp = new Date().toISOString();
+    const siteUrl = input.siteUrl.replace(/\/+$/, "");
+    const preserveSession = input.template === "sub2api"
+      && existing?.template === "sub2api"
+      && existing.siteUrl === siteUrl;
+    const credentialSource = input.template === "sub2api"
+      ? preserveSession ? existing : undefined
+      : existing;
+    const connectionChanged = !existing
+      || existing.siteUrl !== siteUrl
+      || existing.template !== input.template
+      || existing.lowBalanceUsd !== input.lowBalanceUsd
+      || Boolean(input.apiKey?.trim());
+    const wallet: Wallet = {
+      id: existing?.id ?? crypto.randomUUID(),
+      name: input.name,
+      siteUrl,
+      template: input.template,
+      credentialKind: input.template === "sub2api" ? "session" : "api-key",
+      credentialStatus: input.template === "sub2api"
+        ? preserveSession ? existing.credentialStatus : "missing"
+        : "ready",
+      ...(getMockWalletCredentialHint(input, credentialSource)
+        ? { credentialHint: getMockWalletCredentialHint(input, credentialSource) }
+        : {}),
+      lowBalanceUsd: input.lowBalanceUsd,
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp,
+      ...(!connectionChanged && existing?.balance ? { balance: existing.balance } : {}),
+    };
+    mockWallets = existing
+      ? mockWallets.map((item) => item.id === wallet.id ? wallet : item)
+      : [wallet, ...mockWallets];
+    return clone(wallet);
+  },
+
+  async loginWallet(id: string) {
+    const wallet = mockWallets.find((item) => item.id === id);
+    if (!wallet) throw new Error("钱包不存在");
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const updated: Wallet = {
+      ...wallet,
+      credentialKind: "session",
+      credentialStatus: "ready",
+      credentialHint: "demo@sub2api.local",
+      balance: {
+        status: "ok",
+        scope: "account",
+        remainingUsd: 42.68,
+        subscriptions: [{
+          id: 1,
+          name: "30刀订阅",
+          dailyUsedUsd: 4.43,
+          dailyLimitUsd: 30,
+          expiresAt: new Date(Date.now() + 8 * 24 * 60 * 60_000).toISOString(),
+          resetsAt: new Date(Date.now() + 20 * 60 * 60_000).toISOString(),
+        }],
+        checkedAt: new Date().toISOString(),
+      },
+    };
+    mockWallets = mockWallets.map((item) => item.id === id ? updated : item);
+    return clone({ cancelled: false, wallet: updated });
+  },
+
+  async importWalletKeys(
+    id: string,
+    groupMode?: WalletKeyImportGroupMode,
+  ): Promise<WalletKeyImportResult> {
+    const wallet = mockWallets.find((item) => item.id === id);
+    if (!wallet) throw new Error("钱包不存在");
+    const existing = mockProfileGroups.find((group) => group.name === wallet.name);
+    if (existing && groupMode === undefined) {
+      return { status: "group-conflict", groupName: wallet.name };
+    }
+    let group = groupMode === "existing" ? existing : undefined;
+    if (!group) {
+      let name = wallet.name;
+      let suffix = 2;
+      while (mockProfileGroups.some((item) => item.name === name)) {
+        name = `${wallet.name} (${suffix})`;
+        suffix += 1;
+      }
+      const timestamp = new Date().toISOString();
+      group = { id: crypto.randomUUID(), name, createdAt: timestamp, updatedAt: timestamp };
+      mockProfileGroups = [...mockProfileGroups, group];
+    }
+    const timestamp = new Date().toISOString();
+    const profile: Profile = {
+      id: crypto.randomUUID(),
+      groupId: group.id,
+      name: `${wallet.name} Key`,
+      protocol: "openai-responses",
+      baseUrl: wallet.siteUrl.replace(/\/+$/, ""),
+      endpoints: [{ url: wallet.siteUrl.replace(/\/+$/, ""), models: [] }],
+      availableModels: [],
+      keyHint: "•••• DEMO",
+      model: "",
+      authMode: "bearer",
+      targets: ["codex"],
+      autoSwitch: { enabled: false, intervalMinutes: 2 },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    mockProfiles = [...mockProfiles, profile];
+    await mockBridge.testProfile!(profile.id);
+    return {
+      status: "complete",
+      groupId: group.id,
+      groupName: group.name,
+      imported: 1,
+      reused: 0,
+      skipped: 0,
+    };
+  },
+
+  async deleteWallet(id: string) {
+    mockWallets = mockWallets.filter((wallet) => wallet.id !== id);
+    return { ok: true };
+  },
+
+  async checkWallet(id: string): Promise<Wallet> {
+    const wallet = mockWallets.find((item) => item.id === id);
+    if (!wallet) throw new Error("钱包不存在");
+    await new Promise((resolve) => setTimeout(resolve, 420 + mockWallets.indexOf(wallet) * 180));
+    const remainingUsd = wallet.template === "sub2api" ? 42.68
+      : wallet.template === "new-api" ? 3.72
+        : 12.4;
+    const updated: Wallet = {
+      ...wallet,
+      balance: {
+        status: remainingUsd <= 0 ? "empty"
+          : wallet.lowBalanceUsd > 0 && remainingUsd <= wallet.lowBalanceUsd ? "low"
+            : "ok",
+        scope: wallet.template === "new-api" ? "key"
+          : wallet.template === "one-api" ? "site"
+            : "account",
+        remainingUsd,
+        ...(wallet.template !== "sub2api" ? { totalUsd: 25, usedUsd: 25 - remainingUsd } : {}),
+        ...(wallet.template === "sub2api" ? {
+          subscriptions: [{
+            id: 1,
+            name: "30刀订阅",
+            dailyUsedUsd: 4.43,
+            dailyLimitUsd: 30,
+            expiresAt: new Date(Date.now() + 8 * 24 * 60 * 60_000).toISOString(),
+            resetsAt: new Date(Date.now() + 20 * 60 * 60_000).toISOString(),
+          }],
+        } : {}),
+        checkedAt: new Date().toISOString(),
+      },
+    };
+    mockWallets = mockWallets.map((item) => item.id === id ? updated : item);
+    return clone(updated);
   },
 
   async listSessions() {

@@ -1,5 +1,5 @@
-import { Activity, KeyRound, LayoutDashboard, MessagesSquare, Minus, Radio, Settings, ShieldCheck, Square, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Activity, KeyRound, LayoutDashboard, MessagesSquare, Minus, Radio, Settings, ShieldCheck, Square, WalletCards, X } from "lucide-react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, ReactElement } from "react";
 import { ActivityView } from "./components/ActivityView";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -12,12 +12,13 @@ import { RollingNumber } from "./components/RollingNumber";
 import { SettingsView } from "./components/SettingsView";
 import { StatusView } from "./components/StatusView";
 import { Toast } from "./components/Toast";
+import { WalletView } from "./components/WalletView";
 import { APP_VERSION, DEFAULT_SETTINGS } from "./config";
 import { useAgentGateController } from "./hooks/useAgentGateController";
 import { I18nProvider, useI18n } from "./i18n";
 import type { Messages } from "./i18n";
 import { api, isDesktop } from "./lib/api";
-import type { Profile, SaveProfileInput } from "./types";
+import type { Profile, ProfileGroup, SaveProfileInput } from "./types";
 import type { View } from "./ui-types";
 
 interface EditorState {
@@ -29,6 +30,7 @@ const NAV_ICONS: Record<View, ReactElement> = {
   overview: <LayoutDashboard size={13} />,
   keyring: <KeyRound size={13} />,
   status: <Radio size={13} />,
+  wallet: <WalletCards size={13} />,
   activity: <Activity size={13} />,
   sessions: <MessagesSquare size={13} />,
   settings: <Settings size={13} />,
@@ -38,12 +40,63 @@ const NAV_LABEL: Record<View, (m: Messages) => string> = {
   overview: (m) => m.nav.overview,
   keyring: (m) => m.nav.keys,
   status: (m) => m.nav.status,
+  wallet: (m) => m.nav.wallet,
   activity: (m) => m.nav.stream,
   sessions: (m) => m.sessions.title,
   settings: (m) => m.nav.config,
 };
 
-const NAV_ORDER: View[] = ["overview", "keyring", "status", "activity", "sessions", "settings"];
+export const NAV_ORDER: View[] = ["overview", "wallet", "keyring", "status", "activity", "sessions", "settings"];
+const EMPTY_PROFILE_GROUPS: ProfileGroup[] = [];
+
+// 请求进度会高频刷新 AppShell。各页只在自身可见状态或实际数据变化时重渲染。
+function bothInactive(previous: { active?: boolean }, next: { active?: boolean }): boolean {
+  return previous.active === false && next.active === false;
+}
+
+const OverviewPage = memo(OverviewView, (previous, next) => (
+  bothInactive(previous, next) || (previous.active === next.active
+  && previous.profiles === next.profiles
+  && previous.clients === next.clients
+  && previous.gateway === next.gateway
+  && previous.requests === next.requests
+  && previous.activeRequestCount === next.activeRequestCount
+  && previous.busy === next.busy)
+));
+const KeyringPage = memo(KeyringView, (previous, next) => (
+  bothInactive(previous, next) || (previous.active === next.active
+  && previous.profiles === next.profiles
+  && previous.groups === next.groups
+  && previous.gateway === next.gateway
+  && previous.busy === next.busy
+  && previous.busyId === next.busyId
+  && previous.loading === next.loading
+  && previous.error === next.error
+  && previous.testingIds === next.testingIds)
+));
+const StatusPage = memo(StatusView, (previous, next) => (
+  previous.active === next.active
+  && previous.profiles === next.profiles
+  && previous.busy === next.busy
+  && previous.busyId === next.busyId
+));
+const WalletPage = memo(WalletView, (previous, next) => (
+  bothInactive(previous, next) || previous.active === next.active
+));
+const ActivityPage = memo(ActivityView, (previous, next) => (
+  bothInactive(previous, next)
+  || (previous.active === next.active && previous.requests === next.requests)
+));
+const SessionsPage = memo(SessionsView, (previous, next) => (
+  bothInactive(previous, next) || previous.active === next.active
+));
+const SettingsPage = memo(SettingsView, (previous, next) => (
+  bothInactive(previous, next) || (previous.active === next.active
+  && previous.settings === next.settings
+  && previous.busy === next.busy
+  && previous.update === next.update
+  && previous.version === next.version)
+));
 
 /** 与 CSS 里 .theme-shifting 的过渡时长保持一致。 */
 const THEME_SHIFT_MS = 460;
@@ -71,11 +124,17 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
   const [editor, setEditor] = useState<EditorState>({ open: false });
   const [pendingDelete, setPendingDelete] = useState<Profile>();
   const settings = controller.data.settings ?? DEFAULT_SETTINGS;
+  const profileGroups = controller.data.profileGroups ?? EMPTY_PROFILE_GROUPS;
   const requestRecords = controller.data.activeRequests ?? [];
-  const activeRequests = requestRecords.filter((request) => (
-    !request.completedAt
-    && ["connecting", "waiting-first-token", "streaming"].includes(request.state)
-  ));
+  let activeRequestCount = 0;
+  for (const request of requestRecords) {
+    if (!request.completedAt
+      && (request.state === "connecting"
+        || request.state === "waiting-first-token"
+        || request.state === "streaming")) {
+      activeRequestCount += 1;
+    }
+  }
   const gateway = controller.data.gateway;
   const engagedCount = gateway.engaged.length;
   const gatewayOn = gateway.status === "running" || gateway.status === "starting";
@@ -207,8 +266,8 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
             >
               {NAV_ICONS[item]}
               <span key={locale} className="swap-text">{NAV_LABEL[item](m)}</span>
-              {item === "activity" && activeRequests.length > 0 && (
-                <em>{activeRequests.length}</em>
+              {item === "activity" && activeRequestCount > 0 && (
+                <em>{activeRequestCount}</em>
               )}
               <i aria-hidden="true" />
             </button>
@@ -262,25 +321,25 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
         </div>
       </header>
 
-      {view === "overview" && (
-        <OverviewView
-          profiles={controller.data.profiles}
-          clients={controller.data.clients}
-          gateway={gateway}
-          requests={requestRecords}
-          activeRequestCount={activeRequests.length}
-          busy={Boolean(controller.busy)}
-          onApply={(id, target) => void controller.applyProfile(id, [target])}
-          onEngage={(target) => void controller.startGateway({
-            port: gateway.port || 17863,
-            targets: [target],
-          })}
-          onRelease={(target) => void controller.stopGateway({ targets: [target] })}
-          onGoActivity={goActivity}
-        />
-      )}
-      <KeyringView
+      <OverviewPage
+        active={view === "overview"}
         profiles={controller.data.profiles}
+        clients={controller.data.clients}
+        gateway={gateway}
+        requests={requestRecords}
+        activeRequestCount={activeRequestCount}
+        busy={Boolean(controller.busy)}
+        onApply={(id, target) => void controller.applyProfile(id, [target])}
+        onEngage={(target) => void controller.startGateway({
+          port: gateway.port || 17863,
+          targets: [target],
+        })}
+        onRelease={(target) => void controller.stopGateway({ targets: [target] })}
+        onGoActivity={goActivity}
+      />
+      <KeyringPage
+        profiles={controller.data.profiles}
+        groups={profileGroups}
         gateway={gateway}
         busy={controller.busy}
         busyId={controller.busyId}
@@ -297,34 +356,40 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
         onDiscoverModels={(id) => void controller.testProfile(id)}
         onProbe={(id) => void controller.probeProfile(id)}
         onCopyKey={(profile) => void controller.copyKey(profile)}
-        onReorder={(ids) => void controller.reorderProfiles(ids)}
+        onSaveGroup={controller.saveProfileGroup}
+        onDeleteGroup={controller.deleteProfileGroup}
+        onOrganize={(input) => void controller.organizeProfiles(input)}
         onRetry={() => void controller.refresh()}
         active={view === "keyring"}
       />
-      <StatusView
+      <StatusPage
         profiles={controller.data.profiles}
         busy={Boolean(controller.busy)}
         busyId={controller.busyId}
         onApply={(id, targets) => void controller.applyProfile(id, targets)}
         active={view === "status"}
       />
-      <ActivityView requests={requestRecords} active={view === "activity"} />
-      <SessionsView
+      <WalletPage
+        active={view === "wallet"}
+        onToast={(kind, message) => controller.setToast({ kind, message })}
+        onProfilesChanged={() => controller.refresh()}
+      />
+      <ActivityPage requests={requestRecords} active={view === "activity"} />
+      <SessionsPage
         active={view === "sessions"}
         onToast={(kind, message) => controller.setToast({ kind, message })}
       />
-      {view === "settings" && (
-        <SettingsView
-          settings={settings}
-          busy={controller.busy === "settings"}
-          update={controller.data.update}
-          version={APP_VERSION}
-          onChange={(patch) => void controller.updateSettings(patch)}
-          onCheckUpdate={() => void controller.checkForUpdate()}
-          onDownloadUpdate={() => void controller.downloadUpdate()}
-          onInstallUpdate={() => void controller.installUpdate()}
-        />
-      )}
+      <SettingsPage
+        active={view === "settings"}
+        settings={settings}
+        busy={controller.busy === "settings"}
+        update={controller.data.update}
+        version={APP_VERSION}
+        onChange={(patch) => void controller.updateSettings(patch)}
+        onCheckUpdate={() => void controller.checkForUpdate()}
+        onDownloadUpdate={() => void controller.downloadUpdate()}
+        onInstallUpdate={() => void controller.installUpdate()}
+      />
 
       <footer className="status-footer" aria-live="polite">
         <span>
@@ -357,6 +422,7 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
       {editor.open && (
         <ProfileEditor
           profile={editor.profile}
+          groups={profileGroups}
           busy={controller.busy === "save"}
           discovering={controller.busy === "test" && controller.busyId === editor.profile?.id}
           onDiscoverModels={(input) => controller.testProfileDraft(input)}
