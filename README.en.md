@@ -8,7 +8,7 @@ A local API key manager and loopback gateway for Windows AI clients.
 
 [![Release](https://img.shields.io/github/v/release/trygn35-ui/agentgate?style=flat-square)](https://github.com/trygn35-ui/agentgate/releases/latest)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2F78D0?style=flat-square)](#download)
-[![License](https://img.shields.io/github/license/trygn35-ui/agentgate?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-Community%20Use-FF9100?style=flat-square)](LICENSE)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
@@ -188,4 +188,6 @@ The Electron main process owns file writes, DPAPI, and the gateway. The React re
 
 ## License
 
-[MIT](LICENSE)
+[AgentGate Community Use License 1.0](LICENSE)
+
+AgentGate may be downloaded and used for personal, educational, research, and other non-commercial purposes while retaining the author and license notices. Commercial use, sale, hosting, redistribution, publication of modified versions, and presenting another build as official require prior written permission. Private non-commercial modifications are allowed. This is source-available software, not OSI-defined open source.

@@ -1161,7 +1161,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 
 .keyring-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 108px;
+  grid-template-columns: minmax(0, 1fr) 122px;
   gap: 12px;
   align-items: center;
   min-height: 62px;
@@ -1302,8 +1302,9 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   white-space: nowrap;
 }
 
-.keyring-tools { display: flex; align-items: center; justify-content: flex-end; gap: 2px; width: 108px; }
+.keyring-tools { display: flex; align-items: center; justify-content: flex-end; gap: 2px; width: 122px; }
 .keyring-tools > svg { color: var(--ink-quiet); }
+.keyring-assign { height: 26px; padding: 0 8px; font-size: var(--fs-label); }
 .icon-ghost {
   display: grid;
   place-items: center;
@@ -1499,10 +1500,10 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .status-table-head,
 .status-row {
   display: grid;
-  grid-template-columns: 42px minmax(152px, 1.15fr) minmax(112px, .8fr) 74px 84px 76px minmax(116px, 1fr) 100px 36px;
+  grid-template-columns: 42px minmax(152px, 1.15fr) minmax(112px, .8fr) 74px 84px 76px minmax(116px, 1fr) 100px 70px;
   align-items: center;
   gap: 8px;
-  min-width: 900px;
+  min-width: 934px;
 }
 .status-table-head {
   min-height: 30px;
@@ -1523,7 +1524,13 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   transition: background 140ms ease;
 }
 .status-row:last-child { border-bottom: 0; }
+.status-row:nth-child(even) { background: var(--soft); }
 .status-row:hover { background: var(--soft); }
+.status-row.current {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.status-row.current:hover { background: var(--accent-soft); }
 .status-row.healthy { --status-tone: var(--good); }
 .status-row.smooth { --status-tone: var(--cool); }
 .status-row.limited { --status-tone: var(--warn); }
@@ -1553,6 +1560,11 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   color: var(--status-tone);
   border: 1px solid currentColor;
 }
+.status-row-mark.current {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
 .status-row-name { min-width: 0; }
 .status-row-name strong,
 .status-row-model,
@@ -1566,6 +1578,18 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   color: var(--ink);
   font-size: var(--fs-sm);
   font-weight: 600;
+}
+.status-row-name small {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 1px 4px;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-edge);
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: .08em;
 }
 .status-row-model-cell { min-width: 0; }
 .status-row-model {
@@ -1657,7 +1681,12 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   font-family: var(--mono);
   font-size: var(--fs-label);
 }
-.status-row-action { justify-self: end; }
+.status-row-action {
+  justify-self: end;
+  height: 26px;
+  padding: 0 7px;
+  font-size: var(--fs-label);
+}
 
 /* ---------- 钱包 ---------- */
 .wallet-inner { max-width: 1080px; }

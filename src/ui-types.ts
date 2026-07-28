@@ -9,7 +9,6 @@ export type BusyAction =
   | "group"
   | "apply"
   | "test"
-  | "probe"
   | "delete"
   | "gateway-start"
   | "gateway-stop"

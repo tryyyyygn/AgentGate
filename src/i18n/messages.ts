@@ -112,10 +112,9 @@ export interface Messages {
     awaitingSamples: string;
     statLine: string;
     switchTo: string;
+    assign: string;
     inUseHint: string;
     testEndpoints: string;
-    probe: string;
-    probeHint: string;
     expand: string;
     key: string;
     authHeader: string;
@@ -366,8 +365,6 @@ export interface Messages {
     noModels: string;
     healthDone: string;
     healthAllDone: string;
-    probePass: string;
-    probeFail: string;
     autoSwitched: string;
     autoSwitchFailed: string;
     refreshFailed: string;
@@ -491,10 +488,9 @@ const zh: Messages = {
     awaitingSamples: "尚无样本",
     statLine: "1 小时 {availability}% · 平均 {latency}",
     switchTo: "将「{name}」分配给全部适用客户端",
+    assign: "分配",
     inUseHint: "已在使用中，点击重新分配全部适用客户端",
     testEndpoints: "检测端点延迟（不影响其他操作）",
-    probe: "实测",
-    probeHint: "实测：发送一条最小消息，测真实可用性与时延",
     expand: "{name} 详情",
     key: "密钥",
     authHeader: "认证头",
@@ -741,8 +737,6 @@ const zh: Messages = {
     noModels: "请求已完成，但没有识别到模型",
     healthDone: "端点检测完成：{reachable} / {total} 可达",
     healthAllDone: "全部检测完成：{reachable} / {total} 个方案可达",
-    probePass: "实测通过 · {model} · 首包 {ttfb} · 总耗时 {total}{usage}",
-    probeFail: "实测失败{status}{message}",
     autoSwitched: "已自动切换到 {url}",
     autoSwitchFailed: "自动检测失败",
     refreshFailed: "{message}，但界面刷新失败：{error}",
@@ -871,10 +865,9 @@ const zhTW: Messages = {
     awaitingSamples: "尚無樣本",
     statLine: "1 小時 {availability}% · 平均 {latency}",
     switchTo: "將「{name}」分配給所有適用 Client",
+    assign: "分配",
     inUseHint: "使用中。點一下重新套用到所有適用的 Client",
     testEndpoints: "檢測 Endpoint 延遲（不影響其他操作）",
-    probe: "實測",
-    probeHint: "實測：送一則最小訊息，測真實可用性與延遲",
     expand: "{name} 的細節",
     key: "API Key",
     authHeader: "Auth Header",
@@ -1121,8 +1114,6 @@ const zhTW: Messages = {
     noModels: "請求完成了，但沒偵測到任何 Model",
     healthDone: "Endpoint 檢測完成：{reachable} / {total} 可達",
     healthAllDone: "全部檢測完成：{reachable} / {total} 個 Profile 可達",
-    probePass: "實測通過 · {model} · 首包 {ttfb} · 總耗時 {total}{usage}",
-    probeFail: "實測失敗{status}{message}",
     autoSwitched: "已自動切到 {url}",
     autoSwitchFailed: "自動檢測失敗",
     refreshFailed: "{message}，但畫面沒刷新成功：{error}",
@@ -1251,10 +1242,9 @@ const ja: Messages = {
     awaitingSamples: "サンプルなし",
     statLine: "1時間 {availability}% · 平均 {latency}",
     switchTo: "「{name}」を対応クライアントすべてに割り当て",
+    assign: "割り当て",
     inUseHint: "使用中。クリックで対象クライアントすべてに再適用",
     testEndpoints: "エンドポイントの遅延を計測（他の操作は止まりません）",
-    probe: "実測",
-    probeHint: "実測：最小のメッセージを送り、実際の可用性と遅延を測ります",
     expand: "{name} の詳細",
     key: "API キー",
     authHeader: "認証ヘッダ",
@@ -1501,8 +1491,6 @@ const ja: Messages = {
     noModels: "リクエストは成功しましたが、モデルは見つかりませんでした",
     healthDone: "エンドポイントのチェック完了：{reachable} / {total} 到達可",
     healthAllDone: "一括チェック完了：{reachable} / {total} 件のプロファイルが到達可",
-    probePass: "実測 OK · {model} · 初バイト {ttfb} · 合計 {total}{usage}",
-    probeFail: "実測 NG{status}{message}",
     autoSwitched: "{url} に自動で切り替えました",
     autoSwitchFailed: "自動チェックに失敗",
     refreshFailed: "{message}。ただし画面の更新に失敗しました：{error}",
@@ -1631,10 +1619,9 @@ const en: Messages = {
     awaitingSamples: "AWAITING SAMPLES",
     statLine: "1H {availability}% · AVG {latency}",
     switchTo: "Assign {name} to all compatible clients",
+    assign: "ASSIGN",
     inUseHint: "Already active — click to re-bind all compatible clients",
     testEndpoints: "Probe endpoint latency (non-blocking)",
-    probe: "Probe",
-    probeHint: "Probe: send a minimal message to measure real availability and latency",
     expand: "{name} details",
     key: "KEY",
     authHeader: "AUTH",
@@ -1881,8 +1868,6 @@ const en: Messages = {
     noModels: "Completed, but no models were recognized",
     healthDone: "Probe complete: {reachable} / {total} reachable",
     healthAllDone: "All probes complete: {reachable} / {total} profiles reachable",
-    probePass: "Probe OK · {model} · TTFB {ttfb} · total {total}{usage}",
-    probeFail: "Probe failed{status}{message}",
     autoSwitched: "Auto-switched to {url}",
     autoSwitchFailed: "Auto probe failed",
     refreshFailed: "{message}, but the view failed to refresh: {error}",

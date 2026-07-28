@@ -1,8 +1,9 @@
 {
   "name": "agentgate",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "author": "TRYGN",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "description": "A local API profile manager and loopback gateway for Claude Code, Codex, OpenCode and Gemini CLI.",
   "main": "electron/main.cjs",
   "scripts": {

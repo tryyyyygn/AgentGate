@@ -16,7 +16,7 @@ import type { ReactElement } from "react";
 import { useI18n } from "../i18n";
 import { api } from "../lib/api";
 import { describeError, formatCompactDateTime, formatDuration } from "../lib/format";
-import type { Profile, ProbeResult } from "../types";
+import type { GatewayState, Profile, ProbeResult } from "../types";
 
 const DEFAULT_INTERVAL_MS = 120_000;
 const MAX_SAMPLES = 60;
@@ -46,6 +46,7 @@ interface ProbeBatchItem<T> {
 
 interface StatusViewProps {
   profiles: ReadonlyArray<Profile>;
+  gateway?: Pick<GatewayState, "routes">;
   busy?: boolean;
   busyId?: string;
   onApply?: (id: string, targets: Profile["targets"]) => void;
@@ -247,6 +248,7 @@ function StateIcon({ state }: { state: ProbeState }): ReactElement {
 
 export function StatusView({
   profiles,
+  gateway,
   busy = false,
   busyId,
   onApply,
@@ -433,6 +435,10 @@ export function StatusView({
 
   const unsupported = !api.probeProfile;
   const countdown = probeCountdownSeconds(nextProbeAt, clockMs);
+  const currentProfileIds = useMemo(
+    () => new Set(gateway?.routes.map((route) => route.profileId) ?? []),
+    [gateway?.routes],
+  );
 
   return (
     <main className="page-scroll status-page" aria-label={m.status.title} hidden={!active}>
@@ -536,13 +542,14 @@ export function StatusView({
               const availabilityValue = probeAvailability(historySamples);
               const lastCheck = record.result?.checkedAt;
               const applying = busyId === profile.id;
+              const current = currentProfileIds.has(profile.id);
               const monitoringHint = fill(
                 disabled ? m.status.enableProbe : m.status.disableProbe,
                 { name: profile.name },
               );
               return (
                 <div
-                  className={`status-row ${state} ${disabled ? "disabled" : ""} ${record.checking ? "checking" : ""}`}
+                  className={`status-row ${state} ${current ? "current" : ""} ${disabled ? "disabled" : ""} ${record.checking ? "checking" : ""}`}
                   key={profile.id}
                   role="row"
                 >
@@ -559,9 +566,12 @@ export function StatusView({
                   </label>
 
                   <div className="status-row-channel" role="cell">
-                    <span className="status-row-mark"><Radio size={12} /></span>
+                    <span className={`status-row-mark ${current ? "current" : ""}`}>
+                      {current ? <Zap size={12} /> : <Radio size={12} />}
+                    </span>
                     <span className="status-row-name">
                       <strong title={profile.name}>{profile.name}</strong>
+                      {current && <small>{m.keys.active}</small>}
                     </span>
                   </div>
 
@@ -618,13 +628,14 @@ export function StatusView({
 
                   <button
                     type="button"
-                    className="icon-ghost status-row-action"
+                    className="ghost-pill status-row-action"
                     title={fill(m.keys.switchTo, { name: profile.name })}
                     aria-label={fill(m.keys.switchTo, { name: profile.name })}
                     disabled={busy || !onApply}
                     onClick={() => onApply?.(profile.id, [...profile.targets])}
                   >
-                    {applying ? <LoaderCircle size={14} className="spin" /> : <Zap size={14} />}
+                    {applying ? <LoaderCircle size={12} className="spin" /> : <Zap size={12} />}
+                    {m.keys.assign}
                   </button>
                 </div>
               );

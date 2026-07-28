@@ -8,7 +8,7 @@
 
 [![Release](https://img.shields.io/github/v/release/trygn35-ui/agentgate?style=flat-square)](https://github.com/trygn35-ui/agentgate/releases/latest)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2F78D0?style=flat-square)](#下載)
-[![License](https://img.shields.io/github/license/trygn35-ui/agentgate?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-Community%20Use-FF9100?style=flat-square)](LICENSE)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
@@ -188,4 +188,6 @@ Electron Main Process 負責檔案寫入、DPAPI 與 Gateway；React Renderer �
 
 ## License
 
-[MIT](LICENSE)
+[AgentGate Community Use License 1.0](LICENSE)
+
+可免費下載並用於個人、教育、研究與其他非商業用途，且必須保留作者與授權聲明。未經書面許可，不得商用、販售、代管、重新散布、公開修改版或冒充官方版本；只允許私下進行非商業修改。本專案為 source-available，不是 OSI 定義的開源軟體。

@@ -8,7 +8,7 @@ Windows のデスクトップ AI クライアント向け、ローカル API キ
 
 [![Release](https://img.shields.io/github/v/release/trygn35-ui/agentgate?style=flat-square)](https://github.com/trygn35-ui/agentgate/releases/latest)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2F78D0?style=flat-square)](#ダウンロード)
-[![License](https://img.shields.io/github/license/trygn35-ui/agentgate?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-Community%20Use-FF9100?style=flat-square)](LICENSE)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
@@ -188,4 +188,6 @@ pnpm release
 
 ## License
 
-[MIT](LICENSE)
+[AgentGate Community Use License 1.0](LICENSE)
+
+著作権表示とライセンス表示を残す限り、個人・教育・研究その他の非商用目的で無料でダウンロードして利用できます。商用利用、販売、ホスティング、再配布、改変版の公開、公式版を装う行為には、事前の書面による許可が必要です。私的な非商用の改変のみ認められます。本プロジェクトは source-available であり、OSI 定義のオープンソースではありません。

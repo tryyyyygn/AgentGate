@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CLIENT_META, DEFAULT_SETTINGS, EMPTY_BOOTSTRAP } from "../config";
 import { MESSAGES, fill, resolveLocale } from "../i18n";
 import { api } from "../lib/api";
-import { describeError, formatDuration, formatTokenCount } from "../lib/format";
+import { describeError } from "../lib/format";
 import { mergeActiveRequests } from "../lib/requests";
 import type {
   BootstrapData,
@@ -56,7 +56,6 @@ export interface AgentGateController {
   checkAllProfilesHealth: () => Promise<void>;
   /** 正在后台检测端点的方案 ID 集合；检测不锁定其他操作。 */
   testingIds: ReadonlySet<string>;
-  probeProfile: (id: string) => Promise<void>;
   deleteProfile: (profile: Profile) => Promise<boolean>;
   copyKey: (profile: Profile) => Promise<void>;
   openConfig: (target: ClientTarget) => Promise<void>;
@@ -582,50 +581,6 @@ export function useAgentGateController(): AgentGateController {
     });
   }
 
-  async function probeProfile(id: string): Promise<void> {
-    if (commandLock.current) return;
-    if (!api.probeProfile) {
-      setToast({ kind: "error", message: m.current.toast.unsupported });
-      return;
-    }
-    commandLock.current = true;
-    setBusy("probe");
-    setBusyId(id);
-    try {
-      const result = await api.probeProfile(id);
-      const usage = result.tokenUsage;
-      const cached = (usage?.cachedTokens ?? 0) > 0
-        ? ` (${m.current.keys.cache} ${formatTokenCount(usage?.cachedTokens)})`
-        : "";
-      const usageText = usage
-        ? ` · ↓${formatTokenCount(usage.inputTokens)}${cached} ↑${formatTokenCount(usage.outputTokens)}`
-        : "";
-      setToast(result.ok
-        ? {
-            kind: "success",
-            message: fill(m.current.toast.probePass, {
-              model: result.model ?? "",
-              ttfb: formatDuration(result.firstByteMs),
-              total: formatDuration(result.totalMs),
-              usage: usageText,
-            }),
-          }
-        : {
-            kind: "error",
-            message: fill(m.current.toast.probeFail, {
-              status: result.statusCode !== undefined ? ` · HTTP ${result.statusCode}` : "",
-              message: result.message ? ` · ${result.message}` : "",
-            }),
-          });
-    } catch (error) {
-      setToast({ kind: "error", message: describeError(error) });
-    } finally {
-      commandLock.current = false;
-      setBusy(null);
-      setBusyId(undefined);
-    }
-  }
-
   async function deleteProfile(profile: Profile): Promise<boolean> {
     if (commandLock.current) return false;
     commandLock.current = true;
@@ -825,7 +780,6 @@ export function useAgentGateController(): AgentGateController {
     checkProfileHealth,
     checkAllProfilesHealth,
     testingIds,
-    probeProfile,
     deleteProfile,
     copyKey,
     openConfig,

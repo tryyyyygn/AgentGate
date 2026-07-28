@@ -1,21 +1,66 @@
-MIT License
+AgentGate Community Use License 1.0
 
 Copyright (c) 2026 trygn35-ui
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This license applies to versions of AgentGate distributed with this file. It
+does not alter rights granted under licenses that accompanied earlier releases.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. License Grant
+
+Subject to the terms below, the copyright holder grants you a limited,
+non-exclusive, non-transferable, revocable license to download, install, run,
+and make backup copies of unmodified copies of the Software for personal,
+educational, research, nonprofit, and other non-commercial purposes.
+
+You may make private modifications solely for your own non-commercial use. You
+may not distribute, publish, or otherwise make those modifications available to
+any other person or entity.
+
+2. Attribution
+
+You must retain all copyright, trademark, attribution, and license notices in
+every permitted copy of the Software.
+
+3. Restrictions
+
+Unless the copyright holder gives prior written permission, you may not:
+
+a. use the Software for commercial advantage or monetary compensation. Use by
+   or on behalf of a for-profit organization is commercial use;
+b. sell, rent, lease, sublicense, monetize, bundle, host, provide as a service,
+   or otherwise commercially exploit the Software or any part of it;
+c. distribute, publish, mirror, repackage, or make available any unmodified or
+   modified copy of the Software, its source code, binaries, or derivative
+   works;
+d. publish a fork, modified version, or competing branded version of the
+   Software;
+e. remove, obscure, or alter any copyright, trademark, attribution, or license
+   notice; or
+f. state or imply that a modified copy, service, or product is official,
+   approved, or endorsed by the copyright holder.
+
+4. Permission Requests
+
+Commercial use, redistribution, and publication of modifications require prior
+written permission from the copyright holder. Permission requests should be
+made through the official AgentGate repository.
+
+5. Third-Party Components
+
+Third-party components included with the Software remain subject to their own
+license terms. Nothing in this license grants rights to those components beyond
+their applicable licenses.
+
+6. Termination
+
+This license terminates automatically if you breach any of its terms. On
+termination, you must stop using and delete all copies of the Software under
+your control, except where retention is required by law.
+
+7. Disclaimer and Limitation of Liability
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. TO THE MAXIMUM EXTENT
+PERMITTED BY LAW, THE COPYRIGHT HOLDER SHALL NOT BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY ARISING FROM OR RELATED TO THE SOFTWARE.

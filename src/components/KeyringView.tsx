@@ -14,7 +14,6 @@ import {
   Pencil,
   Plus,
   RefreshCw,
-  Send,
   Trash2,
   X,
   Zap,
@@ -242,7 +241,6 @@ interface KeyringViewProps {
   /** 正在检测端点的方案 ID；检测不锁定其他操作。 */
   testingIds: ReadonlySet<string>;
   onDiscoverModels: (id: string) => void;
-  onProbe: (id: string) => void;
   onCopyKey: (profile: Profile) => void;
   onSaveGroup: (
     group: ProfileGroup | undefined,
@@ -366,7 +364,6 @@ export function KeyringView({
   onTestAll,
   testingIds,
   onDiscoverModels,
-  onProbe,
   onCopyKey,
   onSaveGroup,
   onDeleteGroup,
@@ -757,7 +754,6 @@ export function KeyringView({
               const cacheRate = cumulativeCacheRate(profile);
               const testing = testingIds.has(profile.id);
               const discovering = busy === "test" && busyId === profile.id;
-              const probing = busy === "probe" && busyId === profile.id;
               const applying = busy === "apply" && busyId === profile.id;
               const rowClass = [
                 "keyring-row",
@@ -874,7 +870,7 @@ export function KeyringView({
                     <span className="keyring-tools">
                       <button
                         type="button"
-                        className="icon-ghost"
+                        className="ghost-pill keyring-assign"
                         title={inUse ? m.keys.inUseHint : fill(m.keys.switchTo, { name: profile.name })}
                         aria-label={fill(m.keys.switchTo, { name: profile.name })}
                         disabled={Boolean(busy)}
@@ -884,8 +880,9 @@ export function KeyringView({
                         }}
                       >
                         {applying
-                          ? <LoaderCircle size={14} className="spin" />
-                          : <Zap size={14} fill={inUse ? "currentColor" : "none"} className={inUse ? "tier-good" : ""} />}
+                          ? <LoaderCircle size={12} className="spin" />
+                          : <Zap size={12} fill={inUse ? "currentColor" : "none"} className={inUse ? "tier-good" : ""} />}
+                        {m.keys.assign}
                       </button>
                       <button
                         type="button"
@@ -899,19 +896,6 @@ export function KeyringView({
                         }}
                       >
                         {testing ? <LoaderCircle size={14} className="spin" /> : <Gauge size={14} />}
-                      </button>
-                      <button
-                        type="button"
-                        className="icon-ghost"
-                        title={m.keys.probeHint}
-                        aria-label={`${m.keys.probe} ${profile.name}`}
-                        disabled={Boolean(busy)}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onProbe(profile.id);
-                        }}
-                      >
-                        {probing ? <LoaderCircle size={14} className="spin" /> : <Send size={14} />}
                       </button>
                       {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                     </span>

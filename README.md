@@ -8,7 +8,7 @@
 
 [![Release](https://img.shields.io/github/v/release/trygn35-ui/agentgate?style=flat-square)](https://github.com/trygn35-ui/agentgate/releases/latest)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2F78D0?style=flat-square)](#下载)
-[![License](https://img.shields.io/github/license/trygn35-ui/agentgate?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-Community%20Use-FF9100?style=flat-square)](LICENSE)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
@@ -188,4 +188,6 @@ Electron 主进程负责文件写入、DPAPI 和网关；React 渲染进程没�
 
 ## 许可
 
-[MIT](LICENSE)
+[AgentGate Community Use License 1.0](LICENSE)
+
+可免费下载并用于个人、教育、研究和其他非商业用途，且必须保留作者与许可证声明。未经书面许可，不得商用、销售、托管、重新分发、发布修改版或冒充官方版本；仅允许私下进行非商业修改。项目为 source-available，不是 OSI 定义的开源软件。

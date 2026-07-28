@@ -108,6 +108,9 @@ with sync_playwright() as playwright:
     page.get_by_role("button", name="KEYS", exact=True).click()
     page.get_by_role("heading", name="Attractor Fields", exact=True).wait_for()
     assert page.locator(".keyring-row").count() == 3
+    assert page.locator(".keyring-tools button").count() == 6
+    assert page.locator(".keyring-assign").count() == 3
+    assert page.locator(".keyring-assign").first.inner_text() == "ASSIGN"
     assert page.locator(".keyring-row").first.evaluate(
         "node => getComputedStyle(node).animationName"
     ) == "none"
@@ -303,8 +306,14 @@ with sync_playwright() as playwright:
     assert console_text.count("AUTO PROBE") == 1
     assert re.search(r"\b\d{1,3}s\b", console_text), console_text
     assert status.locator(".status-row-action").count() == page.locator(".status-row").count()
-    assert status.locator(".status-row-name small").count() == 0
+    assert status.locator(".status-row.current").count() == 1
+    assert status.locator(".status-row.current .status-row-name small").inner_text() == "ACTIVE"
     assert status.locator(".status-row-availability small").count() == 0
+    assert status.locator(".status-row").nth(1).evaluate(
+        "node => getComputedStyle(node).backgroundColor"
+    ) != status.locator(".status-row").nth(2).evaluate(
+        "node => getComputedStyle(node).backgroundColor"
+    )
     assert status.evaluate("node => getComputedStyle(node).getPropertyValue('--cool').trim().toUpperCase()") == "#1F5F6B"
     assert status.evaluate(
         "() => [...document.querySelectorAll('.status-row')].every(row => row.querySelectorAll('.status-pulse-bar').length === 30)"
@@ -395,7 +404,7 @@ with sync_playwright() as playwright:
     page.get_by_role("heading", name="Config", exact=True).wait_for()
     assert page.get_by_text("Codex tool bridge").count() == 0
     assert page.locator(".settings-row-copy small").count() == 0
-    assert page.get_by_text("Current version 1.8.1", exact=True).is_visible()
+    assert page.get_by_text("Current version 1.8.2", exact=True).is_visible()
 
     # 深色主题恢复原有的高对比信息蓝。
     page.get_by_role("radio", name="β FIELD", exact=True).click()

@@ -77,6 +77,7 @@ const KeyringPage = memo(KeyringView, (previous, next) => (
 const StatusPage = memo(StatusView, (previous, next) => (
   previous.active === next.active
   && previous.profiles === next.profiles
+  && previous.gateway === next.gateway
   && previous.busy === next.busy
   && previous.busyId === next.busyId
 ));
@@ -354,7 +355,6 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
         onTestAll={() => void controller.checkAllProfilesHealth()}
         testingIds={controller.testingIds}
         onDiscoverModels={(id) => void controller.testProfile(id)}
-        onProbe={(id) => void controller.probeProfile(id)}
         onCopyKey={(profile) => void controller.copyKey(profile)}
         onSaveGroup={controller.saveProfileGroup}
         onDeleteGroup={controller.deleteProfileGroup}
@@ -364,6 +364,7 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
       />
       <StatusPage
         profiles={controller.data.profiles}
+        gateway={gateway}
         busy={Boolean(controller.busy)}
         busyId={controller.busyId}
         onApply={(id, targets) => void controller.applyProfile(id, targets)}

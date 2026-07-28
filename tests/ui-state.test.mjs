@@ -304,8 +304,10 @@ describe("frontend state boundaries", () => {
         onTest: vi.fn(),
         onTestAll: vi.fn(),
         onDiscoverModels: vi.fn(),
-        onProbe: vi.fn(),
         onCopyKey: vi.fn(),
+        onSaveGroup: vi.fn(),
+        onDeleteGroup: vi.fn(),
+        onOrganize: vi.fn(),
         onReorder: vi.fn(),
         onRetry: vi.fn(),
       }),
@@ -313,6 +315,8 @@ describe("frontend state boundaries", () => {
 
     expect(html).toContain("tier-good");
     expect(html).toContain("99.0%");
+    expect(html).toContain("ASSIGN");
+    expect(html).not.toContain('aria-label="Probe Cached"');
   });
 
   it("密钥与分组都能拖到目标末尾，并即时给出完整排序预览", () => {
@@ -402,6 +406,22 @@ describe("frontend state boundaries", () => {
     expect(html).toContain('hidden=""');
   });
 
+  it("状态页高亮当前已分配的渠道", () => {
+    const current = profile("00000000-0000-4000-8000-000000000041", "Current", "codex");
+    const standby = profile("00000000-0000-4000-8000-000000000042", "Standby", "codex");
+    const html = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(StatusView, {
+        profiles: [current, standby],
+        gateway: { routes: [{ target: "codex", profileId: current.id }] },
+      }),
+    ));
+
+    expect(html).toMatch(/class="status-row [^"]*current/);
+    expect(html).toContain(MESSAGES.en.keys.active);
+  });
+
   it("钱包固定每 5 分钟刷新，并优先显示每日额度使用率最高的订阅", () => {
     expect(WALLET_AUTO_REFRESH_MS).toBe(300_000);
     expect(WALLET_CHECK_CONCURRENCY).toBe(3);
@@ -446,8 +466,10 @@ describe("frontend state boundaries", () => {
       onTest: vi.fn(),
       onTestAll: vi.fn(),
       onDiscoverModels: vi.fn(),
-      onProbe: vi.fn(),
       onCopyKey: vi.fn(),
+      onSaveGroup: vi.fn(),
+      onDeleteGroup: vi.fn(),
+      onOrganize: vi.fn(),
       onReorder: vi.fn(),
       onRetry: vi.fn(),
       active: false,
