@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronDown, Repeat2 } from "lucide-react";
+import { ArrowRight, ChevronDown, Repeat2, RotateCcw } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { CLIENT_META, CLIENT_TARGET_ORDER, PROTOCOL_META } from "../config";
@@ -123,6 +123,8 @@ interface OverviewViewProps {
   onEngage: (target: ClientTarget) => void;
   /** 只放掉这一个客户端。 */
   onRelease: (target: ClientTarget) => void;
+  /** 恢复 Codex 官方登录模式并解除网关分配。 */
+  onRestoreOfficial: () => void;
   onGoActivity: () => void;
 }
 
@@ -143,6 +145,7 @@ export function OverviewView({
   onApply,
   onEngage,
   onRelease,
+  onRestoreOfficial,
   onGoActivity,
 }: OverviewViewProps): ReactElement {
   const { m, fill } = useI18n();
@@ -367,22 +370,31 @@ export function OverviewView({
                       </span>
                     </span>
                   </button>
-                  {/*
-                    选 Key：卡片下面一条同宽的按钮，点开候选列表。
-                    和卡片本体（接管开关）分开，两者不抢同一次点击。
-                  */}
-                  <button
-                    type="button"
-                    className={`socket-swap ${open ? "open" : ""}`}
-                    aria-expanded={open}
-                    aria-label={fill(m.overview.editToEnable, { client: CLIENT_META[target].label })}
-                    disabled={busy}
-                    onClick={() => setPickerFor(open ? undefined : target)}
-                  >
-                    <Repeat2 size={12} />
-                    <span key={boundName} className="swap-text">{m.overview.swapProfile}</span>
-                    <ChevronDown size={12} className={open ? "flip" : ""} />
-                  </button>
+                  {target === "codex" ? (
+                    <button
+                      type="button"
+                      className="socket-swap"
+                      aria-label={m.overview.restoreOfficial}
+                      disabled={busy}
+                      onClick={onRestoreOfficial}
+                    >
+                      <RotateCcw size={12} />
+                      <span className="swap-text">{m.overview.restoreOfficial}</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className={`socket-swap ${open ? "open" : ""}`}
+                      aria-expanded={open}
+                      aria-label={fill(m.overview.editToEnable, { client: CLIENT_META[target].label })}
+                      disabled={busy}
+                      onClick={() => setPickerFor(open ? undefined : target)}
+                    >
+                      <Repeat2 size={12} />
+                      <span key={boundName} className="swap-text">{m.overview.swapProfile}</span>
+                      <ChevronDown size={12} className={open ? "flip" : ""} />
+                    </button>
+                  )}
                   {open && (
                     <PickerMenu label={m.overview.worldLines}>
                       {options.length > 0 ? options.map((option) => {

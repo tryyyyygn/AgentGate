@@ -1731,6 +1731,8 @@ describe("GatewayService", () => {
   });
 
   it("上游响应中途断开时关闭当前响应且网关继续服务", async () => {
+    const onRequestEnded = vi.fn();
+    const monitor = new RequestMonitorService({ onRequestEnded });
     const upstream = await listen((request, response) => {
       if (request.url.endsWith("/reset")) {
         response.writeHead(200, { "content-type": "text/event-stream" });
@@ -1749,13 +1751,17 @@ describe("GatewayService", () => {
     };
     const { service } = await createGateway({
       [PROFILE_A]: { profile, apiKey: "upstream-key" },
-    });
+    }, { requestMonitor: monitor });
     await service.activateRoutes(profile);
     const token = await localCredential(service, profile);
     const baseUrl = service.getPublicState().localBaseUrls.codex;
     const headers = { authorization: `Bearer ${token}` };
 
     await expect(rawRequest(`${baseUrl}/reset`, { headers })).rejects.toThrow();
+    expect(onRequestEnded).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "failed" }),
+      { channelFailure: true },
+    );
     expect((await rawRequest(`${baseUrl}/ok`, { headers })).body.toString()).toBe("ok");
   });
 

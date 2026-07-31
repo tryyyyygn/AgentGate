@@ -12,9 +12,14 @@ export type BusyAction =
   | "delete"
   | "gateway-start"
   | "gateway-stop"
+  | "restore-official"
   | "settings";
 
 export interface ToastState {
   kind: "success" | "error" | "info";
   message: string;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
 }

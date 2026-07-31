@@ -182,12 +182,18 @@ export type AppTheme = "system" | "light" | "dark";
 
 export type AppLanguage = "system" | "zh" | "zh-TW" | "ja" | "en";
 
+export interface ClientFailoverSettings {
+  enabled: boolean;
+  profileIds: string[];
+}
+
 export interface AppSettings {
   launchAtLogin: boolean;
   closeToTray: boolean;
   startGatewayOnLaunch: boolean;
   theme: AppTheme;
   language: AppLanguage;
+  failover: Record<ClientTarget, ClientFailoverSettings>;
 }
 
 export type WalletTemplate = "sub2api" | "new-api" | "one-api";
@@ -331,6 +337,17 @@ export type StateChangedEvent =
       previousBaseUrl?: string;
       baseUrl?: string;
       targets?: ClientTarget[];
+      message?: string;
+    }
+  | {
+      type: "failure-switch";
+      target: ClientTarget;
+      previousProfileId: string;
+      profileId?: string;
+      profileName?: string;
+      switched: boolean;
+      availability?: number;
+      medianLatencyMs?: number;
       message?: string;
     }
   | {
@@ -505,6 +522,8 @@ export interface AgentGateBridge {
   reassignPort(): Promise<BootstrapData>;
   /** 恢复接管前的受管字段，保留方案分配并停止网关。 */
   stopGateway(settings?: GatewayStopSettings): Promise<BootstrapData>;
+  /** 恢复 Codex 官方登录模式，不修改 auth.json，并解除 Codex 网关分配。 */
+  restoreCodexOfficial(): Promise<BootstrapData>;
   /** 更新应用行为设置。旧版 preload 可能暂未提供。 */
   updateSettings?(patch: Partial<AppSettings>): Promise<AppSettings | BootstrapData>;
   /** 独立钱包列表；不读取方案或网关流量。 */

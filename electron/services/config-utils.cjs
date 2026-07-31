@@ -12,6 +12,12 @@ const writeFileAtomic = require('write-file-atomic')
 const { PROTOCOL } = require('./schemas.cjs')
 
 const MANAGED_CODEX_PROVIDER_ID = 'agentgate'
+const MANAGED_CODEX_PROVIDER_IDS = Object.freeze([
+  MANAGED_CODEX_PROVIDER_ID,
+  'agentgate_gateway',
+  'keydeck',
+  'keydeck_gateway',
+])
 const PRIVATE_FILE_MODE = 0o600
 
 /**
@@ -317,6 +323,53 @@ function restoreCodexGatewayBaseUrl(source, state) {
 }
 
 /**
+ * 恢复 Codex 官方登录模式，保留模型、MCP、项目设置和用户自建 provider。
+ *
+ * 官方登录由 auth.json 维护；这里仅删除 config.toml 的 provider 选择和
+ * Agent;Gate 历史版本创建的 provider 表。
+ */
+function restoreCodexOfficialConfig(source) {
+  assertValidToml(source, 'Codex config.toml')
+  const eol = source.includes('\r\n') ? '\r\n' : '\n'
+  const trailingEol = source.endsWith('\n')
+  const lines = source ? source.replace(/\r\n/g, '\n').split('\n') : []
+  if (trailingEol) lines.pop()
+
+  const firstTable = lines.findIndex((line) => /^\s*\[/.test(line))
+  const topLevelEnd = firstTable === -1 ? lines.length : firstTable
+  const providerSelection = lines
+    .slice(0, topLevelEnd)
+    .findIndex((line) => /^\s*model_provider\s*=/.test(line))
+  if (providerSelection >= 0) lines.splice(providerSelection, 1)
+
+  for (const providerId of MANAGED_CODEX_PROVIDER_IDS) {
+    const escapedProviderId = providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const sectionPattern = new RegExp(
+      `^\\s*\\[model_providers(?:\\.${escapedProviderId}|\\."${escapedProviderId}")\\]\\s*(?:#.*)?$`,
+    )
+    const managedSectionPrefix = new RegExp(
+      `^\\s*\\[model_providers(?:\\.${escapedProviderId}|\\."${escapedProviderId}")(?:\\.|\\])`,
+    )
+    const sectionStart = lines.findIndex((line) => sectionPattern.test(line))
+    if (sectionStart < 0) continue
+
+    let sectionEnd = lines.length
+    for (let index = sectionStart + 1; index < lines.length; index += 1) {
+      if (/^\s*\[/.test(lines[index]) && !managedSectionPrefix.test(lines[index])) {
+        sectionEnd = index
+        break
+      }
+    }
+    while (sectionEnd > sectionStart + 1 && !lines[sectionEnd - 1].trim()) sectionEnd -= 1
+    lines.splice(sectionStart, sectionEnd - sectionStart)
+  }
+
+  const result = `${lines.join(eol)}${trailingEol && lines.length ? eol : ''}`
+  assertValidToml(result, 'Restored official Codex config.toml')
+  return result
+}
+
+/**
  * 仅更新 Codex 顶层选择项和 Agent;Gate 自有 provider 表。
  *
  * 其他 provider、MCP、插件、注释和顺序保持不变；旧的 Agent;Gate 子表会一起删除，
@@ -525,5 +578,6 @@ module.exports = {
   codexProviderState,
   patchCodexGatewayBaseUrl,
   restoreCodexGatewayBaseUrl,
+  restoreCodexOfficialConfig,
   patchEnv,
 }

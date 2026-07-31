@@ -92,6 +92,7 @@ function nonEmptyText(value) {
 }
 
 const OPENAI_VISIBLE_CONTENT_TYPES = new Set(['output_text', 'refusal', 'text'])
+const OPENAI_REASONING_CONTENT_TYPES = new Set(['reasoning_text', 'summary_text'])
 
 function isOpenAiVisibleContent(value) {
   if (typeof value === 'string') return nonEmptyText(value)
@@ -111,6 +112,21 @@ function isOpenAiVisibleOutput(value) {
     || isOpenAiVisibleContent(value.content)
 }
 
+function isOpenAiReasoningContent(value) {
+  if (typeof value === 'string') return nonEmptyText(value)
+  if (Array.isArray(value)) return value.some(isOpenAiReasoningContent)
+  if (!value || typeof value !== 'object') return false
+  if (value.type && !OPENAI_REASONING_CONTENT_TYPES.has(value.type)) return false
+  return nonEmptyText(value.text)
+}
+
+function isOpenAiGeneratedOutput(value) {
+  if (isOpenAiVisibleOutput(value)) return true
+  if (!value || typeof value !== 'object' || value.type !== 'reasoning') return false
+  return isOpenAiReasoningContent(value.summary)
+    || isOpenAiReasoningContent(value.content)
+}
+
 function isAnthropicVisibleContent(value) {
   return Boolean(
     value
@@ -120,7 +136,16 @@ function isAnthropicVisibleContent(value) {
   )
 }
 
-function isVisibleTextPayload(protocol, payload, eventName = '') {
+function isAnthropicGeneratedContent(value) {
+  return isAnthropicVisibleContent(value) || Boolean(
+    value
+    && typeof value === 'object'
+    && (!value.type || value.type === 'thinking')
+    && nonEmptyText(value.thinking),
+  )
+}
+
+function isFirstTokenPayload(protocol, payload, eventName = '') {
   if (!payload || typeof payload !== 'object') return false
   if (protocol === 'openai-responses') {
     const textEventTypes = [
@@ -129,47 +154,84 @@ function isVisibleTextPayload(protocol, payload, eventName = '') {
       'response.refusal.delta',
       'response.refusal.done',
     ]
+    const reasoningEventTypes = [
+      'response.reasoning_summary_text.delta',
+      'response.reasoning_summary_text.done',
+    ]
+    const toolArgumentEventTypes = [
+      'response.function_call_arguments.delta',
+      'response.function_call_arguments.done',
+    ]
     if (textEventTypes.includes(eventName) || textEventTypes.includes(payload.type)) {
       return nonEmptyText(payload.delta)
         || nonEmptyText(payload.text)
         || nonEmptyText(payload.refusal)
     }
+    if (reasoningEventTypes.includes(eventName) || reasoningEventTypes.includes(payload.type)) {
+      return nonEmptyText(payload.delta) || nonEmptyText(payload.text)
+    }
+    if (toolArgumentEventTypes.includes(eventName)
+      || toolArgumentEventTypes.includes(payload.type)) {
+      return nonEmptyText(payload.delta) || nonEmptyText(payload.arguments)
+    }
+    const reasoningPartEventTypes = [
+      'response.reasoning_summary_part.added',
+      'response.reasoning_summary_part.done',
+    ]
+    if (reasoningPartEventTypes.includes(eventName)
+      || reasoningPartEventTypes.includes(payload.type)) {
+      return isOpenAiReasoningContent(payload.part)
+    }
     const contentPartTypes = ['response.content_part.added', 'response.content_part.done']
     if (contentPartTypes.includes(eventName) || contentPartTypes.includes(payload.type)) {
-      return isOpenAiVisibleContent(payload.part)
+      return isOpenAiVisibleContent(payload.part) || isOpenAiReasoningContent(payload.part)
     }
     const outputItemTypes = ['response.output_item.added', 'response.output_item.done']
     if (outputItemTypes.includes(eventName) || outputItemTypes.includes(payload.type)) {
-      return isOpenAiVisibleOutput(payload.item)
+      if ((eventName === 'response.output_item.added'
+        || payload.type === 'response.output_item.added')
+        && (payload.item?.type === 'reasoning'
+          || payload.item?.type === 'function_call')) return true
+      return isOpenAiGeneratedOutput(payload.item)
     }
     const response = payload.response || payload
     return nonEmptyText(response.output_text)
       || isOpenAiVisibleContent(response.content)
-      || (Array.isArray(response.output) && response.output.some(isOpenAiVisibleOutput))
+      || (Array.isArray(response.output) && response.output.some(isOpenAiGeneratedOutput))
   }
   if (protocol === 'openai-chat') {
     return Array.isArray(payload.choices) && payload.choices.some((choice) => {
       const delta = choice?.delta || choice?.message || {}
       return nonEmptyText(delta.content)
         || nonEmptyText(delta.refusal)
+        || nonEmptyText(delta.reasoning_content)
+        || nonEmptyText(delta.reasoning)
+        || nonEmptyText(delta.thinking)
+        || delta.tool_calls?.some((tool) => (
+          nonEmptyText(tool?.function?.name) || nonEmptyText(tool?.function?.arguments)
+        ))
     })
   }
   if (protocol === 'anthropic') {
     const type = payload.type || eventName
     const delta = payload.delta || {}
     if (type === 'content_block_delta') {
-      return (!delta.type || delta.type === 'text_delta') && nonEmptyText(delta.text)
+      return nonEmptyText(delta.thinking)
+        || ((!delta.type || delta.type === 'text_delta') && nonEmptyText(delta.text))
+        || (delta.type === 'input_json_delta' && nonEmptyText(delta.partial_json))
     }
     if (type === 'content_block_start') {
-      return isAnthropicVisibleContent(payload.content_block)
+      return isAnthropicGeneratedContent(payload.content_block)
+        || (payload.content_block?.type === 'tool_use'
+          && nonEmptyText(payload.content_block.name))
     }
     const content = payload.message?.content || payload.content
-    return Array.isArray(content) && content.some(isAnthropicVisibleContent)
+    return Array.isArray(content) && content.some(isAnthropicGeneratedContent)
   }
   if (protocol === 'gemini') {
     return Array.isArray(payload.candidates) && payload.candidates.some((candidate) => (
       candidate?.content?.parts?.some((part) => (
-        part?.thought !== true && nonEmptyText(part?.text)
+        nonEmptyText(part?.text) || Boolean(part?.functionCall?.name)
       ))
       || nonEmptyText(candidate?.text)
     ))
@@ -970,7 +1032,7 @@ class RequestMonitorService {
       if (entry.firstTokenLatencyMs !== undefined) continue
       const metadata = extractRequestMetadata(payload?.response || payload)
       if (metadata.model) entry.model = metadata.model
-      if (entry.streaming === true && isVisibleTextPayload(entry.protocol, payload, eventName)) {
+      if (entry.streaming === true && isFirstTokenPayload(entry.protocol, payload, eventName)) {
         this._markFirstToken(entry, receivedAtMs)
         marked = true
       }
@@ -980,7 +1042,7 @@ class RequestMonitorService {
     return marked
   }
 
-  end(id, { outcome } = {}) {
+  end(id, { outcome, channelFailure } = {}) {
     const entry = this.active.get(id)
     if (!entry) return false
     this.active.delete(id)
@@ -1008,7 +1070,10 @@ class RequestMonitorService {
     const removedIds = this._prune()
     if (typeof this.onRequestEnded === 'function') {
       try {
-        this.onRequestEnded(toPublicRequest(entry))
+        const context = entry.sawErrorEvent
+          ? { channelFailure: true }
+          : typeof channelFailure === 'boolean' ? { channelFailure } : {}
+        this.onRequestEnded(toPublicRequest(entry), context)
       } catch {
         // 统计订阅者不得影响网关请求。
       }
@@ -1081,5 +1146,5 @@ module.exports = {
   extractRequestMetadata,
   extractTokenUsage,
   extractTokenUsageFromSource,
-  isVisibleTextPayload,
+  isFirstTokenPayload,
 }

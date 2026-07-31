@@ -743,6 +743,62 @@ args = ["server.js"]
     expect(parsed.model_providers.agentgate.experimental_bearer_token).toBe("sk-codex-secret");
   });
 
+  it("恢复 Codex 官方模式时只移除 Agent;Gate provider 和顶层选择", async () => {
+    const original = [
+      "# 用户的 Codex 配置",
+      'model_provider = "agentgate"',
+      'model = "gpt-user-selected"',
+      'approval_policy = "on-request"',
+      "",
+      "[model_providers.agentgate]",
+      'base_url = "https://agentgate.example/v1"',
+      'wire_api = "responses"',
+      "",
+      "[model_providers.agentgate.http_headers]",
+      'X_AGENTGATE = "remove"',
+      "",
+      "[model_providers.agentgate_gateway]",
+      'base_url = "http://127.0.0.1:17863/codex/token"',
+      'wire_api = "responses"',
+      "",
+      "[model_providers.keydeck]",
+      'base_url = "https://legacy.example/v1"',
+      "",
+      "[model_providers.keydeck_gateway]",
+      'base_url = "http://127.0.0.1:17863/codex/legacy"',
+      "",
+      "[model_providers.custom]",
+      'name = "用户自建"',
+      'base_url = "https://custom.example/v1"',
+      'wire_api = "responses"',
+      "",
+      "[mcp_servers.browser]",
+      'command = "node"',
+      'args = ["服务.js"]',
+      "",
+    ].join("\r\n");
+    await seed(paths.codex.config, original);
+
+    const [draft] = await adapters.codex.buildOfficialRestore();
+    const parsed = TOML.parse(draft.content);
+
+    expect(draft.content).toContain("# 用户的 Codex 配置\r\n");
+    expect(draft.content).not.toMatch(/(^|[^\r])\n/);
+    expect(parsed.model_provider).toBeUndefined();
+    expect(parsed.model).toBe("gpt-user-selected");
+    expect(parsed.approval_policy).toBe("on-request");
+    expect(parsed.model_providers?.agentgate).toBeUndefined();
+    expect(parsed.model_providers?.agentgate_gateway).toBeUndefined();
+    expect(parsed.model_providers?.keydeck).toBeUndefined();
+    expect(parsed.model_providers?.keydeck_gateway).toBeUndefined();
+    expect(parsed.model_providers.custom).toEqual({
+      name: "用户自建",
+      base_url: "https://custom.example/v1",
+      wire_api: "responses",
+    });
+    expect(parsed.mcp_servers.browser).toEqual({ command: "node", args: ["服务.js"] });
+  });
+
   it("Codex 网关只改活跃 provider 的 base_url", async () => {
     const original = [
       "# 用户的 Codex 配置",

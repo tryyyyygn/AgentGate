@@ -14,6 +14,10 @@ const CURRENT_URL = "https://current.example/v1";
 const FAST_URL = "https://fast.example/v1";
 const ALTERNATE_URL = "https://alternate.example/v1";
 const CONNECTION_REVISION = 7;
+const CURRENT_PROFILE_ID = "00000000-0000-4000-8000-000000000101";
+const STABLE_PROFILE_ID = "00000000-0000-4000-8000-000000000102";
+const FAST_PROFILE_ID = "00000000-0000-4000-8000-000000000103";
+const EXCLUDED_PROFILE_ID = "00000000-0000-4000-8000-000000000104";
 
 /**
  * 创建自动切换测试使用的端点快照。
@@ -142,6 +146,108 @@ function createHarness({
     healthService,
     clientService,
     applyService,
+    gatewayService,
+  };
+}
+
+function failoverProfile(id, name, samples) {
+  const checkedAt = "2026-07-30T08:00:00.000Z";
+  return {
+    id,
+    name,
+    protocol: "openai-responses",
+    baseUrl: `https://${name.toLowerCase()}.example/v1`,
+    model: MODEL,
+    targets: ["codex"],
+    endpoints: [{
+      url: `https://${name.toLowerCase()}.example/v1`,
+      models: [MODEL],
+      health: samples.at(-1),
+      healthHistory: samples.map(({ reachable, latencyMs }) => ({
+        status: reachable ? "healthy" : "unhealthy",
+        reachable,
+        latencyMs,
+        checkedAt,
+      })),
+    }],
+    autoSwitch: { enabled: false, intervalMinutes: 2 },
+  };
+}
+
+function failoverHarness() {
+  const reachable = (latencyMs) => ({
+    status: "healthy",
+    reachable: true,
+    latencyMs,
+    checkedAt: "2026-07-30T08:00:00.000Z",
+  });
+  const unreachable = (latencyMs) => ({
+    status: "unhealthy",
+    reachable: false,
+    latencyMs,
+    checkedAt: "2026-07-30T08:00:00.000Z",
+  });
+  const current = failoverProfile(CURRENT_PROFILE_ID, "Current", [reachable(120)]);
+  const stable = failoverProfile(STABLE_PROFILE_ID, "Stable", [
+    reachable(180), reachable(200), reachable(190),
+  ]);
+  const fast = failoverProfile(FAST_PROFILE_ID, "Fast", [
+    reachable(20), unreachable(20), reachable(20),
+  ]);
+  const excluded = failoverProfile(EXCLUDED_PROFILE_ID, "Excluded", [reachable(1)]);
+  const profiles = [current, stable, fast, excluded];
+  const route = { target: "codex", profileId: CURRENT_PROFILE_ID };
+  const apply = vi.fn().mockResolvedValue(undefined);
+  const onChange = vi.fn();
+  const profileService = { list: vi.fn().mockResolvedValue(profiles) };
+  const healthService = {
+    probeProfile: vi.fn(async (id) => ({
+      ok: true,
+      firstByteMs: id === STABLE_PROFILE_ID ? 180 : 10,
+      totalMs: id === STABLE_PROFILE_ID ? 200 : 20,
+      model: MODEL,
+      checkedAt: "2026-07-30T08:01:00.000Z",
+    })),
+  };
+  const settingsService = {
+    getPublicSettings: vi.fn(() => ({
+      failover: {
+        claude: { enabled: false, profileIds: [] },
+        codex: {
+          enabled: true,
+          profileIds: [CURRENT_PROFILE_ID, STABLE_PROFILE_ID, FAST_PROFILE_ID],
+        },
+        opencode: { enabled: false, profileIds: [] },
+        gemini: { enabled: false, profileIds: [] },
+      },
+    })),
+  };
+  const gatewayService = {
+    getPublicState: vi.fn(() => ({
+      status: "running",
+      engaged: ["codex"],
+      routes: [route],
+    })),
+  };
+  const applyService = {
+    withLifecycleLock: vi.fn(async (operation) => operation({ apply })),
+  };
+  const service = new AutoSwitchService({
+    profileService,
+    healthService,
+    settingsService,
+    gatewayService,
+    applyService,
+    now: () => Date.parse("2026-07-30T08:02:00.000Z"),
+  });
+  service.onChange = onChange;
+  return {
+    service,
+    apply,
+    applyService,
+    onChange,
+    healthService,
+    settingsService,
     gatewayService,
   };
 }
@@ -381,6 +487,285 @@ describe("自动 URL 切换服务", () => {
     expect(service.isDue(tested)).toBe(false);
     now = 10 * 60_000;
     expect(service.isDue(tested)).toBe(true);
+  });
+
+  it("未开启 URL 自动择优的密钥仍会按周期探测，但不会切换 URL", async () => {
+    const tested = profile({
+      autoSwitch: { enabled: false, intervalMinutes: 2 },
+      endpoints: [
+        { ...endpoint(CURRENT_URL), health: undefined },
+        { ...endpoint(FAST_URL), health: undefined },
+      ],
+    });
+    const { service, healthService, profileService } = createHarness({
+      tested,
+      now: () => 120_000,
+    });
+
+    await service.tick();
+
+    expect(healthService.testWithSnapshot).toHaveBeenCalledOnce();
+    expect(profileService.setActiveEndpoint).not.toHaveBeenCalled();
+  });
+
+  it("Codex 连续三次渠道失败后只在其候选库内实测，并按可用率优先切换", async () => {
+    const { service, apply, healthService, onChange } = failoverHarness();
+    const failure = {
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 503,
+    };
+
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    expect(apply).not.toHaveBeenCalled();
+    await service.recordRequestResult(failure);
+
+    expect(healthService.probeProfile.mock.calls.map(([id]) => id).sort()).toEqual([
+      FAST_PROFILE_ID,
+      STABLE_PROFILE_ID,
+    ].sort());
+    expect(healthService.probeProfile).not.toHaveBeenCalledWith(EXCLUDED_PROFILE_ID);
+    expect(apply).toHaveBeenCalledWith(STABLE_PROFILE_ID, ["codex"]);
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      type: "failure-switch",
+      target: "codex",
+      previousProfileId: CURRENT_PROFILE_ID,
+      profileId: STABLE_PROFILE_ID,
+      profileName: "Stable",
+      switched: true,
+    }));
+  });
+
+  it("成功请求会清零连续失败，且其他客户端的关闭状态互不影响", async () => {
+    const { service, apply } = failoverHarness();
+    const failure = {
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 429,
+    };
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult({
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "completed",
+      statusCode: 200,
+    });
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult({
+      client: "claude",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 503,
+    });
+
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it("旧密钥晚到的成功请求不会清零当前密钥的连续失败", async () => {
+    const { service } = failoverHarness();
+    const currentFailure = {
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 503,
+    };
+
+    await service.recordRequestResult(currentFailure);
+    await service.recordRequestResult({
+      client: "codex",
+      profileId: STABLE_PROFILE_ID,
+      outcome: "completed",
+      statusCode: 200,
+    });
+
+    expect(service.failures.get("codex")).toEqual({
+      profileId: CURRENT_PROFILE_ID,
+      count: 1,
+    });
+  });
+
+  it("旧密钥晚到的失败请求不会清零当前密钥的连续失败", async () => {
+    const { service, gatewayService } = failoverHarness();
+    const currentFailure = {
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 503,
+    };
+    const nextFailure = { ...currentFailure, profileId: STABLE_PROFILE_ID };
+    gatewayService.getPublicState.mockReturnValue({
+      status: "running",
+      engaged: ["codex"],
+      routes: [{ target: "codex", profileId: STABLE_PROFILE_ID }],
+    });
+
+    await service.recordRequestResult(nextFailure);
+    await service.recordRequestResult(currentFailure);
+
+    expect(service.failures.get("codex")).toEqual({
+      profileId: STABLE_PROFILE_ID,
+      count: 1,
+    });
+  });
+
+  it("设置或网关生命周期变化后必须重新累计连续失败", async () => {
+    const { service, apply } = failoverHarness();
+    const failure = {
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 503,
+    };
+
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    service.resetFailoverFailures();
+    await service.recordRequestResult(failure);
+
+    expect(service.failures.get("codex")).toEqual({
+      profileId: CURRENT_PROFILE_ID,
+      count: 1,
+    });
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it("当前密钥不在候选库时不接管，普通 4xx 和取消也不累计失败", async () => {
+    const { service, apply, healthService, settingsService } = failoverHarness();
+    settingsService.getPublicSettings.mockReturnValue({
+      failover: {
+        claude: { enabled: false, profileIds: [] },
+        codex: { enabled: true, profileIds: [STABLE_PROFILE_ID, FAST_PROFILE_ID] },
+        opencode: { enabled: false, profileIds: [] },
+        gemini: { enabled: false, profileIds: [] },
+      },
+    });
+    const failure = {
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 503,
+    };
+
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult({ ...failure, statusCode: 400 });
+    await service.recordRequestResult({ ...failure, statusCode: 400 }, { channelFailure: true });
+    await service.recordRequestResult({ ...failure, outcome: "cancelled", statusCode: undefined });
+    await service.recordRequestResult({ ...failure, statusCode: undefined }, { channelFailure: false });
+
+    expect(healthService.probeProfile).not.toHaveBeenCalled();
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it("HTTP 200 流内的协议级渠道失败会累计并触发切换", async () => {
+    const { service, apply } = failoverHarness();
+    const failure = {
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 200,
+    };
+
+    await service.recordRequestResult(failure, { channelFailure: true });
+    await service.recordRequestResult(failure, { channelFailure: true });
+    await service.recordRequestResult(failure, { channelFailure: true });
+
+    expect(apply).toHaveBeenCalledWith(STABLE_PROFILE_ID, ["codex"]);
+  });
+
+  it("stopAndWait 会中止并等待故障切换实测，且停止后不再接管请求", async () => {
+    const { service, apply, healthService, onChange } = failoverHarness();
+    healthService.probeProfile.mockImplementation((_id, _model, { signal }) => (
+      new Promise((resolve) => {
+        signal.addEventListener("abort", () => resolve({ ok: false }), { once: true });
+      })
+    ));
+    const failure = {
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 503,
+    };
+
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    const switching = service.recordRequestResult(failure);
+    await vi.waitFor(() => expect(healthService.probeProfile).toHaveBeenCalledTimes(2));
+    await Promise.all([switching, service.stopAndWait()]);
+
+    expect(healthService.probeProfile.mock.calls.every((call) => call[2].signal.aborted)).toBe(true);
+    expect(apply).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    expect(healthService.probeProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it("停止后即使故障切换拿到生命周期锁也不得提交路由", async () => {
+    const { service, apply, applyService, onChange } = failoverHarness();
+    let releaseLifecycle;
+    applyService.withLifecycleLock.mockImplementation((operation) => new Promise((resolve, reject) => {
+      releaseLifecycle = () => Promise.resolve(operation({ apply })).then(resolve, reject);
+    }));
+    const failure = {
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 503,
+    };
+
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    const switching = service.recordRequestResult(failure);
+    await vi.waitFor(() => expect(applyService.withLifecycleLock).toHaveBeenCalledOnce());
+    let stopped = false;
+    const stopBarrier = service.stopAndWait().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+
+    expect(stopped).toBe(false);
+    releaseLifecycle();
+    await Promise.all([switching, stopBarrier]);
+    expect(apply).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("故障切换提交期间停止会在同一事务内切回原密钥", async () => {
+    const { service, apply, onChange } = failoverHarness();
+    let finishSelectedApply;
+    apply
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishSelectedApply = resolve;
+      }))
+      .mockResolvedValueOnce(undefined);
+    const failure = {
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 503,
+    };
+
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    const switching = service.recordRequestResult(failure);
+    await vi.waitFor(() => expect(apply).toHaveBeenCalledWith(STABLE_PROFILE_ID, ["codex"]));
+    const stopBarrier = service.stopAndWait();
+    finishSelectedApply();
+    await Promise.all([switching, stopBarrier]);
+
+    expect(apply.mock.calls).toEqual([
+      [STABLE_PROFILE_ID, ["codex"]],
+      [CURRENT_PROFILE_ID, ["codex"]],
+    ]);
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("前一轮 tick 未完成时不会重入", async () => {

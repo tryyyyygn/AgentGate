@@ -28,7 +28,7 @@ Agent;Gate 把這些工作收進一個本機 Windows App：
 - Client 只需連到一次 `127.0.0.1`，之後切換 Profile 不必反覆改設定。
 - 在獨立的錢包頁查看中轉站餘額與每日訂閱額度，需要時再匯入可用 Key。
 - 使用真正的 Key 定期送出最小請求，顯示可用率、延遲與近期結果。
-- 即時查看請求狀態、TTFB/TTFC、Token 與 Cache 命中。
+- 即時查看請求狀態、TTFB/TTFT、Token 與 Cache 命中。
 - 瀏覽及刪除 Claude Code、Codex、OpenCode 留在本機的 Session。
 
 它不是雲端服務，也不是共用 Proxy；沒有帳號、後端或 Telemetry。

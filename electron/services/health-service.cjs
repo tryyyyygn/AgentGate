@@ -480,10 +480,11 @@ class HealthService {
    *
    * @param {string} id 方案 UUID。
    * @param {string | undefined} modelOverride 仅用于本次实测的模型 ID，不修改方案。
+   * @param {{signal?: AbortSignal}} options 可选的外部中止信号。
    * @returns {Promise<object>} { ok, statusCode?, firstByteMs, totalMs, model, message? }。
    * @throws 方案不存在、Key 不可解密或未设置模型时抛出错误。
    */
-  async probeProfile(id, modelOverride) {
+  async probeProfile(id, modelOverride, options = {}) {
     const { profile, apiKey } = await this.profileService.getConnection(id)
     const activeEndpoint = profile.endpoints.find((endpoint) => (
       endpoint.url.replace(/\/+$/, '') === profile.baseUrl.replace(/\/+$/, '')
@@ -495,6 +496,9 @@ class HealthService {
     if (!model) throw new Error('请先设置模型 ID 或识别模型后再实测')
 
     const controller = new AbortController()
+    const abortFromExternal = () => controller.abort()
+    if (options.signal?.aborted) controller.abort()
+    else options.signal?.addEventListener('abort', abortFromExternal, { once: true })
     const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
     timeout.unref?.()
     const startedAt = Date.now()
@@ -547,6 +551,7 @@ class HealthService {
       }
     } finally {
       clearTimeout(timeout)
+      options.signal?.removeEventListener('abort', abortFromExternal)
     }
   }
 }

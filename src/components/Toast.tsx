@@ -23,9 +23,14 @@ function ToastIcon({ kind }: Pick<ToastState, "kind">): ReactElement {
 export function Toast({ toast, onClose }: ToastProps): ReactElement {
   const { m } = useI18n();
   return (
-    <div className="toast" role="status">
+    <div className={`toast${toast.action ? " has-action" : ""}`} role="status">
       <span className={`toast-icon ${toast.kind}`}><ToastIcon kind={toast.kind} /></span>
       <span>{toast.message}</span>
+      {toast.action && (
+        <button type="button" className="toast-action" onClick={toast.action.onClick}>
+          {toast.action.label}
+        </button>
+      )}
       <button type="button" className="toast-close" title={m.toast.close} onClick={onClose}>
         <X size={13} />
       </button>

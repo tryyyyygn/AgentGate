@@ -1475,7 +1475,13 @@ describe("首次使用 Codex（配置里没有 provider）", () => {
       gatewayService,
       gatewayBaselineStore,
     });
-    return { profileService, gatewayService, applyService, codexPath };
+    return {
+      profileService,
+      gatewayService,
+      gatewayBaselineStore,
+      applyService,
+      codexPath,
+    };
   }
 
   async function freshProfile(profileService) {
@@ -1566,6 +1572,171 @@ describe("首次使用 Codex（配置里没有 provider）", () => {
       expect(restored.model).toBe("o3");
       expect(restored.model_providers?.agentgate_gateway).toBeUndefined();
       expect(restored.mcp_servers.demo.command).toBe("node");
+    } finally {
+      await gatewayService.stop().catch(() => {});
+    }
+  });
+
+  it("恢复官方保留 Codex 登录、用户配置，并清除路由和启动恢复意图", async () => {
+    const {
+      profileService,
+      gatewayService,
+      gatewayBaselineStore,
+      applyService,
+      codexPath,
+    } = freshHarness();
+    const authPath = path.join(path.dirname(codexPath), "auth.json");
+    const auth = '{"tokens":{"access_token":"用户当前登录"}}\n';
+    const original = `# 用户设置必须保留
+model_provider = "custom"
+model = "o3"
+approval_policy = "never"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://custom.example/v1"
+wire_api = "responses"
+
+[model_providers.agentgate]
+name = "旧 Agent;Gate 直连"
+base_url = "https://old-agentgate.example/v1"
+wire_api = "responses"
+
+[mcp_servers.demo]
+command = "node"
+`;
+    await fs.mkdir(path.dirname(codexPath), { recursive: true });
+    await fs.writeFile(codexPath, original, "utf8");
+    await fs.writeFile(authPath, auth, "utf8");
+    const profile = await freshProfile(profileService);
+    await applyService.assignProfile(profile.id, ["codex"]);
+
+    try {
+      await applyService.startGateway({ port: 0, targets: ["codex"] });
+      expect(TOML.parse(await fs.readFile(codexPath, "utf8"))
+        .model_providers.custom.base_url).toMatch(/^http:\/\/127\.0\.0\.1:/);
+
+      await applyService.restoreCodexOfficial();
+
+      const restoredSource = await fs.readFile(codexPath, "utf8");
+      const restored = TOML.parse(restoredSource);
+      expect(restoredSource).toContain("# 用户设置必须保留");
+      expect(restored.model_provider).toBeUndefined();
+      expect(restored.model).toBe("o3");
+      expect(restored.approval_policy).toBe("never");
+      expect(restored.model_providers.custom.base_url).toBe("https://custom.example/v1");
+      expect(restored.model_providers.agentgate).toBeUndefined();
+      expect(restored.mcp_servers.demo.command).toBe("node");
+      expect(await fs.readFile(authPath, "utf8")).toBe(auth);
+      expect(gatewayService.getPublicState()).toMatchObject({
+        status: "stopped",
+        targets: [],
+        engaged: [],
+        routes: [],
+      });
+      expect(gatewayService.getLifecycleState().resumeTargets).toEqual([]);
+      expect((await gatewayBaselineStore.read()).baselines.codex).toBeUndefined();
+
+      await applyService.reconcileGatewayOnLaunch({ start: true });
+      expect(gatewayService.getPublicState().engaged).toEqual([]);
+    } finally {
+      await gatewayService.stop().catch(() => {});
+    }
+  });
+
+  it("恢复官方不覆盖接管期间用户手动修改的自定义 provider", async () => {
+    const { profileService, gatewayService, applyService, codexPath } = freshHarness();
+    await fs.mkdir(path.dirname(codexPath), { recursive: true });
+    await fs.writeFile(codexPath, `model_provider = "custom"
+
+[model_providers.custom]
+base_url = "https://before.example/v1"
+wire_api = "responses"
+`, "utf8");
+    const profile = await freshProfile(profileService);
+    await applyService.assignProfile(profile.id, ["codex"]);
+
+    try {
+      await applyService.startGateway({ port: 0, targets: ["codex"] });
+      const takenOver = await fs.readFile(codexPath, "utf8");
+      await fs.writeFile(
+        codexPath,
+        takenOver.replace(/base_url = "http:\/\/127\.0\.0\.1:[^"]+"/, 'base_url = "https://user-edit.example/v1"'),
+        "utf8",
+      );
+
+      await applyService.restoreCodexOfficial();
+
+      const restored = TOML.parse(await fs.readFile(codexPath, "utf8"));
+      expect(restored.model_provider).toBeUndefined();
+      expect(restored.model_providers.custom.base_url).toBe("https://user-edit.example/v1");
+    } finally {
+      await gatewayService.stop().catch(() => {});
+    }
+  });
+
+  it("首次接管后恢复官方保留当前模型，不回滚到接管前模型", async () => {
+    const { profileService, gatewayService, applyService, codexPath } = freshHarness();
+    await fs.mkdir(path.dirname(codexPath), { recursive: true });
+    await fs.writeFile(codexPath, 'model = "before-takeover"\n', "utf8");
+    const profile = await freshProfile(profileService);
+    await applyService.assignProfile(profile.id, ["codex"]);
+
+    try {
+      await applyService.startGateway({ port: 0, targets: ["codex"] });
+      const takenOver = await fs.readFile(codexPath, "utf8");
+      await fs.writeFile(
+        codexPath,
+        takenOver.replace('model = "gpt-5-codex"', 'model = "current-user-model"'),
+        "utf8",
+      );
+
+      await applyService.restoreCodexOfficial();
+
+      const restored = TOML.parse(await fs.readFile(codexPath, "utf8"));
+      expect(restored.model_provider).toBeUndefined();
+      expect(restored.model).toBe("current-user-model");
+      expect(restored.model_providers?.agentgate_gateway).toBeUndefined();
+    } finally {
+      await gatewayService.stop().catch(() => {});
+    }
+  });
+
+  it("恢复官方清理持久状态失败时回滚配置和 Codex 路由", async () => {
+    const {
+      profileService,
+      gatewayService,
+      gatewayBaselineStore,
+      applyService,
+      codexPath,
+    } = freshHarness();
+    const profile = await freshProfile(profileService);
+    await applyService.assignProfile(profile.id, ["codex"]);
+
+    try {
+      await applyService.startGateway({ port: 0, targets: ["codex"] });
+      const takenOver = await fs.readFile(codexPath, "utf8");
+      const originalWrite = gatewayBaselineStore.write.bind(gatewayBaselineStore);
+      let failCleanup = true;
+      vi.spyOn(gatewayBaselineStore, "write").mockImplementation(async (value) => {
+        if (failCleanup && !value.baselines.codex) {
+          throw new Error("simulated official cleanup failure");
+        }
+        return originalWrite(value);
+      });
+
+      await expect(applyService.restoreCodexOfficial())
+        .rejects.toThrow("simulated official cleanup failure");
+      expect(await fs.readFile(codexPath, "utf8")).toBe(takenOver);
+      expect(gatewayService.getPublicState()).toMatchObject({
+        status: "running",
+        targets: ["codex"],
+        engaged: ["codex"],
+        routes: [{ target: "codex", profileId: profile.id }],
+      });
+
+      failCleanup = false;
+      await applyService.restoreCodexOfficial();
     } finally {
       await gatewayService.stop().catch(() => {});
     }

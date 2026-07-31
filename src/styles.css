@@ -1444,6 +1444,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   cursor: pointer;
 }
 .status-refresh { margin-left: 0; }
+.status-failover { margin-right: 2px; }
 
 .status-console {
   display: grid;
@@ -2265,6 +2266,83 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
+
+.failover-dialog { width: min(720px, 100%); }
+.failover-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.failover-client {
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  background: var(--card);
+}
+.failover-client-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.failover-client-head > div { min-width: 0; }
+.failover-client-head strong,
+.failover-client-head span { display: block; }
+.failover-client-head strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--fs-base);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.failover-client-head span {
+  margin-top: 2px;
+  color: var(--ink-quiet);
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+}
+.failover-switch { cursor: pointer; }
+.failover-candidate-head {
+  padding: 7px 10px 4px;
+  color: var(--ink-quiet);
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+}
+.failover-profile-list {
+  max-height: 148px;
+  overflow: auto;
+  padding: 0 6px 6px;
+}
+.failover-profile-list label {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.failover-profile-list label:hover { background: var(--soft); }
+.failover-profile-list input { accent-color: var(--accent); }
+.failover-profile-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.failover-profile-list small {
+  color: var(--good);
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+}
+.failover-empty {
+  min-height: 48px;
+  margin: 0;
+  padding: 7px 10px 12px;
+  color: var(--ink-quiet);
+  font-size: var(--fs-sm);
+}
 .key-group-members > .field-name { margin: 0; padding: 8px 2px 4px; }
 .key-group-members > p {
   margin: 0;
@@ -2741,11 +2819,25 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .toast-icon.error { color: #DB131D; }
 .toast-icon.info { color: #FF9100; }
 .toast > span:not(.toast-icon) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
   font-size: var(--fs-sm);
 }
+.toast-action {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 9px;
+  color: #1A1A1A;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.toast-action:hover { filter: brightness(1.08); }
 .toast-close {
   flex: 0 0 auto;
   display: grid;
@@ -2760,6 +2852,35 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 }
 .toast-close:hover { color: #E8E4DA; }
 .toast-undo { display: none; }
+
+@media (max-width: 520px) {
+  .toast.has-action {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr) 24px;
+    width: calc(100vw - 24px);
+    gap: 8px 9px;
+  }
+  .toast.has-action .toast-icon {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: start;
+    margin-top: 1px;
+  }
+  .toast.has-action > span:not(.toast-icon) {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .toast.has-action .toast-action {
+    grid-column: 2 / 4;
+    grid-row: 2;
+    justify-self: start;
+  }
+  .toast.has-action .toast-close {
+    grid-column: 3;
+    grid-row: 1;
+    align-self: start;
+  }
+}
 
 /* ---------- 空状态 ---------- */
 .empty-state {
@@ -3503,6 +3624,7 @@ body.rail-dragging .rail-thumb { cursor: grabbing; }
   }
 
   .page-inner { padding-right: 12px; padding-left: 12px; }
+  .failover-body { grid-template-columns: minmax(0, 1fr); }
   .keyring-open {
     grid-template-columns: 28px minmax(0, 1fr) 72px 72px;
     grid-template-areas:

@@ -21,6 +21,7 @@ const CHANNELS = Object.freeze({
   openConfig: 'agentgate:open-config',
   startGateway: 'agentgate:start-gateway',
   stopGateway: 'agentgate:stop-gateway',
+  restoreCodexOfficial: 'agentgate:restore-codex-official',
   reassignPort: 'agentgate:reassign-port',
   updateSettings: 'agentgate:update-settings',
   listWallets: 'agentgate:list-wallets',
@@ -68,6 +69,7 @@ const CHANNELS = Object.freeze({
  * - openConfig(target)                -> agentgate:open-config
  * - startGateway({ port? })           -> agentgate:start-gateway（使用已分配路由）
  * - stopGateway()                     -> agentgate:stop-gateway（保留路由分配）
+ * - restoreCodexOfficial()            -> agentgate:restore-codex-official
  * - updateSettings(patch)             -> agentgate:update-settings（保存应用运行设置）
  * - onStateChanged(callback)          -> agentgate:state-changed
  */
@@ -97,6 +99,7 @@ const api = Object.freeze({
   startGateway: (settings) => ipcRenderer.invoke(CHANNELS.startGateway, settings),
   reassignPort: () => ipcRenderer.invoke(CHANNELS.reassignPort),
   stopGateway: (settings) => ipcRenderer.invoke(CHANNELS.stopGateway, settings),
+  restoreCodexOfficial: () => ipcRenderer.invoke(CHANNELS.restoreCodexOfficial),
   updateSettings: (patch) => ipcRenderer.invoke(CHANNELS.updateSettings, patch),
   listWallets: () => ipcRenderer.invoke(CHANNELS.listWallets),
   saveWallet: (input) => ipcRenderer.invoke(CHANNELS.saveWallet, input),

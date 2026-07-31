@@ -5,6 +5,18 @@ const THEME_VALUES = ['system', 'light', 'dark']
 const LANGUAGE_VALUES = ['system', 'zh', 'zh-TW', 'ja', 'en']
 const SILENT_LAUNCH_FLAG = '--silent'
 
+const FailoverTargetSchema = z.object({
+  enabled: z.boolean(),
+  profileIds: z.array(z.string().uuid()),
+}).strict()
+
+const FailoverSettingsSchema = z.object({
+  claude: FailoverTargetSchema,
+  codex: FailoverTargetSchema,
+  opencode: FailoverTargetSchema,
+  gemini: FailoverTargetSchema,
+}).strict()
+
 const SettingsSchema = z.object({
   version: z.literal(1),
   launchAtLogin: z.boolean(),
@@ -13,6 +25,7 @@ const SettingsSchema = z.object({
   theme: z.enum(THEME_VALUES),
   // 老版本写下的 settings.json 没有这个字段，缺省值让它继续可读。
   language: z.enum(LANGUAGE_VALUES).default('system'),
+  failover: FailoverSettingsSchema.default(() => defaultFailoverSettings()),
 })
 
 const SettingsPatchSchema = SettingsSchema.omit({ version: true }).partial().strict()
@@ -25,6 +38,16 @@ function defaultSettings() {
     startGatewayOnLaunch: true,
     theme: 'system',
     language: 'system',
+    failover: defaultFailoverSettings(),
+  }
+}
+
+function defaultFailoverSettings() {
+  return {
+    claude: { enabled: false, profileIds: [] },
+    codex: { enabled: false, profileIds: [] },
+    opencode: { enabled: false, profileIds: [] },
+    gemini: { enabled: false, profileIds: [] },
   }
 }
 

@@ -193,7 +193,7 @@ describe("活动请求监视", () => {
     expect(monitor.list()[0].firstTokenLatencyMs).toBe(45);
   });
 
-  it("Responses 完整 reasoning 输出不冒充可见正文", () => {
+  it("Responses 完整 reasoning 输出可以记录首 token", () => {
     let now = 2_800;
     const monitor = new RequestMonitorService({ now: () => now });
     const id = monitor.start({
@@ -204,16 +204,38 @@ describe("活动请求监视", () => {
     monitor.responseStarted(id, { statusCode: 200, streaming: true });
 
     now += 20;
-    monitor.observeChunk(id,
-      'data: {"type":"response.completed","response":{"output":[{"type":"reasoning","content":[{"type":"reasoning_text","text":"内部分析"}]}]}}\n\n');
-    expect(monitor.list()[0].firstTokenLatencyMs).toBeUndefined();
+    expect(monitor.observeChunk(id,
+      'data: {"type":"response.completed","response":{"output":[{"type":"reasoning","content":[{"type":"reasoning_text","text":"内部分析"}]}]}}\n\n')).toBe(true);
+    expect(monitor.list()[0].firstTokenLatencyMs).toBe(20);
 
     now += 30;
-    expect(monitor.observeChunk(
+    monitor.observeChunk(
       id,
       'data: {"type":"response.output_text.delta","delta":"对用户可见"}\n\n',
+    );
+    expect(monitor.list()[0].firstTokenLatencyMs).toBe(20);
+  });
+
+  it("Responses 创建空 reasoning 项时立即记录首 token，后续正文不覆盖", () => {
+    let now = 10_000;
+    const monitor = new RequestMonitorService({ now: () => now });
+    const id = monitor.start({
+      profileName: "隐藏推理",
+      protocol: "openai-responses",
+      streaming: true,
+    });
+    monitor.responseStarted(id, { statusCode: 200, streaming: true });
+
+    now += 1_000;
+    expect(monitor.observeChunk(
+      id,
+      'event: response.output_item.added\ndata: {"type":"response.output_item.added","item":{"type":"reasoning","summary":[]}}\n\n',
     )).toBe(true);
-    expect(monitor.list()[0].firstTokenLatencyMs).toBe(50);
+    expect(monitor.list()[0].firstTokenLatencyMs).toBe(1_000);
+
+    now += 5 * 60_000;
+    monitor.observeChunk(id, 'data: {"type":"response.output_text.delta","delta":"完成"}\n\n');
+    expect(monitor.list()[0].firstTokenLatencyMs).toBe(1_000);
   });
 
   it.each([
@@ -223,14 +245,9 @@ describe("活动请求监视", () => {
       'event: response.reasoning_summary_text.delta\ndata: {"delta":"分析"}\n\n',
     ],
     [
-      "Responses 工具参数",
-      "openai-responses",
-      'event: response.function_call_arguments.delta\ndata: {"delta":"{\\"path\\":"}\n\n',
-    ],
-    [
-      "Chat 工具参数",
+      "Chat 推理",
       "openai-chat",
-      'data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{}"}}]}}]}\n\n',
+      'data: {"choices":[{"delta":{"reasoning_content":"分析"}}]}\n\n',
     ],
     [
       "Anthropic thinking",
@@ -242,26 +259,47 @@ describe("活动请求监视", () => {
       "gemini",
       '{"candidates":[{"content":{"parts":[{"text":"分析","thought":true}]}}]}\n',
     ],
-  ])("%s 不冒充首个可见文本", (_name, protocol, payload) => {
+  ])("%s 作为首个生成 token 立即记录", (_name, protocol, payload) => {
     let now = 3_000;
     const monitor = new RequestMonitorService({ now: () => now });
-    const id = monitor.start({ profileName: "可见文本", protocol, streaming: true });
+    const id = monitor.start({ profileName: "推理 token", protocol, streaming: true });
     monitor.responseStarted(id, { statusCode: 200, streaming: true });
 
     now += 25;
-    monitor.observeChunk(id, payload);
-    expect(monitor.list()[0].firstTokenLatencyMs).toBeUndefined();
+    expect(monitor.observeChunk(id, payload)).toBe(true);
+    expect(monitor.list()[0].firstTokenLatencyMs).toBe(25);
+  });
 
-    now += 40;
-    const visible = protocol === "openai-chat"
-      ? 'data: {"choices":[{"delta":{"content":"你好"}}]}\n\n'
-      : protocol === "anthropic"
-        ? 'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"text":"你好"}}\n\n'
-        : protocol === "gemini"
-          ? '{"candidates":[{"content":{"parts":[{"text":"你好"}]}}]}\n'
-          : 'data: {"type":"response.output_text.delta","delta":"你好"}\n\n';
-    monitor.observeChunk(id, visible);
-    expect(monitor.list()[0].firstTokenLatencyMs).toBe(65);
+  it.each([
+    [
+      "Responses 工具参数",
+      "openai-responses",
+      'event: response.function_call_arguments.delta\ndata: {"delta":"{\\"path\\":"}\n\n',
+    ],
+    [
+      "Chat 工具参数",
+      "openai-chat",
+      'data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{}"}}]}}]}\n\n',
+    ],
+    [
+      "Anthropic 工具参数",
+      "anthropic",
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"query\\":"}}\n\n',
+    ],
+    [
+      "Gemini 工具调用",
+      "gemini",
+      '{"candidates":[{"content":{"parts":[{"functionCall":{"name":"search","args":{"query":"x"}}}]}}]}\n',
+    ],
+  ])("%s 作为计费输出记录首 token", (_name, protocol, payload) => {
+    let now = 3_000;
+    const monitor = new RequestMonitorService({ now: () => now });
+    const id = monitor.start({ profileName: "工具输出", protocol, streaming: true });
+    monitor.responseStarted(id, { statusCode: 200, streaming: true });
+
+    now += 25;
+    expect(monitor.observeChunk(id, payload)).toBe(true);
+    expect(monitor.list()[0].firstTokenLatencyMs).toBe(25);
   });
 
   it("同一响应 chunk 的首包和首字共用到达时间，不计入解析开销", () => {
@@ -384,12 +422,31 @@ describe("活动请求监视", () => {
   it("只回错误事件的 200 流记为 failed，而不是 completed", () => {
     // 真实事故：中转校验请求失败后仍以 HTTP 200 开流，只发一个
     // response.failed 就结束；此前会被记成「已完成」且无任何 token。
-    const monitor = new RequestMonitorService({ now: () => 1_000 });
+    const onRequestEnded = vi.fn();
+    const monitor = new RequestMonitorService({ now: () => 1_000, onRequestEnded });
     const id = monitor.start({ profileName: "中转", protocol: "openai-responses", streaming: true });
     monitor.responseStarted(id, { statusCode: 200, streaming: true });
     monitor.observeChunk(id, 'event: response.failed\ndata: {"type":"response.failed","response":{"error":{"code":"invalid_id_prefix"}}}\n\n');
     monitor.end(id);
     expect(monitor.list()[0]).toMatchObject({ state: "failed", outcome: "failed" });
+    expect(onRequestEnded).toHaveBeenCalledWith(
+      expect.not.objectContaining({ channelFailure: expect.anything() }),
+      { channelFailure: true },
+    );
+  });
+
+  it("请求结束来源标记只传给内部订阅者，不进入公开历史", () => {
+    const onRequestEnded = vi.fn();
+    const monitor = new RequestMonitorService({ now: () => 1_000, onRequestEnded });
+    const id = monitor.start({ profileName: "本地失败" });
+
+    monitor.end(id, { outcome: "failed", channelFailure: false });
+
+    expect(onRequestEnded).toHaveBeenCalledWith(
+      expect.not.objectContaining({ channelFailure: expect.anything() }),
+      { channelFailure: false },
+    );
+    expect(monitor.list()[0]).not.toHaveProperty("channelFailure");
   });
 
   it("先产出正文再收到 response.failed 的 200 流仍记为 failed", () => {
@@ -518,16 +575,16 @@ describe("活动请求监视", () => {
     });
   });
 
-  it("Gemini 工具调用参数不算首个可见文本", () => {
+  it("Gemini 工具调用参数算首个计费输出", () => {
     let now = 12_000;
     const monitor = new RequestMonitorService({ now: () => now });
     const id = monitor.start({ profileName: "Gemini", protocol: "gemini", streaming: true });
     monitor.responseStarted(id, { streaming: true });
     now += 24;
-    monitor.observeChunk(id, JSON.stringify({
+    expect(monitor.observeChunk(id, JSON.stringify({
       candidates: [{ content: { parts: [{ functionCall: { name: "search", args: { query: "x" } } }] } }],
-    }));
-    expect(monitor.list()[0].firstTokenLatencyMs).toBeUndefined();
+    }))).toBe(true);
+    expect(monitor.list()[0].firstTokenLatencyMs).toBe(24);
   });
 
   it("大事件截断正文后仍从尾部提取 usage", () => {
@@ -777,10 +834,9 @@ describe("中止归类", () => {
     for (let index = 0; index < 4_000; index += 1) {
       monitor.observeChunk(
         id,
-        `event: response.output_item.added\ndata: ${JSON.stringify({
-          type: "response.output_item.added",
-          output_index: index,
-          item: { type: "reasoning", id: `rs_${index}`, summary: [] },
+        `event: response.in_progress\ndata: ${JSON.stringify({
+          type: "response.in_progress",
+          sequence_number: index,
         })}\n\n`,
       );
     }

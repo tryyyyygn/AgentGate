@@ -31,6 +31,12 @@ describe('SettingsService', () => {
       startGatewayOnLaunch: true,
       theme: 'system',
       language: 'system',
+      failover: {
+        claude: { enabled: false, profileIds: [] },
+        codex: { enabled: false, profileIds: [] },
+        opencode: { enabled: false, profileIds: [] },
+        gemini: { enabled: false, profileIds: [] },
+      },
     })
     expect(app.setLoginItemSettings).toHaveBeenCalledWith({
       openAtLogin: false,
@@ -39,9 +45,10 @@ describe('SettingsService', () => {
     })
   })
 
-  it('读取旧版没有 language 字段的配置文件时补上默认值而不是报错', async () => {
+  it('读取旧版没有 language 和故障切换字段的配置文件时补上默认值而不是报错', async () => {
     const legacy = defaultSettings()
     delete legacy.language
+    delete legacy.failover
     const app = { setLoginItemSettings: vi.fn() }
     const service = new SettingsService({
       store: memoryStore(legacy),
@@ -49,7 +56,36 @@ describe('SettingsService', () => {
       executablePath: 'D:\\Keydeck.exe',
     })
 
-    await expect(service.initialize()).resolves.toMatchObject({ language: 'system' })
+    await expect(service.initialize()).resolves.toMatchObject({
+      language: 'system',
+      failover: {
+        codex: { enabled: false, profileIds: [] },
+      },
+    })
+  })
+
+  it('按客户端保存故障切换开关和候选库', async () => {
+    const app = { setLoginItemSettings: vi.fn() }
+    const service = new SettingsService({ store: memoryStore(), app, executablePath: 'D:\\Keydeck.exe' })
+    await service.initialize()
+    const first = '00000000-0000-4000-8000-000000000101'
+    const second = '00000000-0000-4000-8000-000000000102'
+
+    const result = await service.update({
+      failover: {
+        ...defaultSettings().failover,
+        codex: { enabled: true, profileIds: [first, second] },
+      },
+    })
+
+    expect(result.failover.codex).toEqual({ enabled: true, profileIds: [first, second] })
+    expect(result.failover.claude).toEqual({ enabled: false, profileIds: [] })
+    await expect(service.update({
+      failover: {
+        ...defaultSettings().failover,
+        codex: { enabled: true, profileIds: ['not-a-profile-id'] },
+      },
+    })).rejects.toThrow()
   })
 
   it('保存界面语言', async () => {

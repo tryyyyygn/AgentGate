@@ -78,6 +78,7 @@ const StatusPage = memo(StatusView, (previous, next) => (
   previous.active === next.active
   && previous.profiles === next.profiles
   && previous.gateway === next.gateway
+  && previous.settings === next.settings
   && previous.busy === next.busy
   && previous.busyId === next.busyId
 ));
@@ -336,6 +337,7 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
           targets: [target],
         })}
         onRelease={(target) => void controller.stopGateway({ targets: [target] })}
+        onRestoreOfficial={() => void controller.restoreCodexOfficial()}
         onGoActivity={goActivity}
       />
       <KeyringPage
@@ -365,9 +367,11 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
       <StatusPage
         profiles={controller.data.profiles}
         gateway={gateway}
+        settings={settings}
         busy={Boolean(controller.busy)}
         busyId={controller.busyId}
         onApply={(id, targets) => void controller.applyProfile(id, targets)}
+        onSettingsChange={(patch) => void controller.updateSettings(patch)}
         active={view === "status"}
       />
       <WalletPage

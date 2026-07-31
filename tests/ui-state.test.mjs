@@ -11,6 +11,7 @@ const {
 } = await import("../src/components/KeyringView");
 const { ActivityView } = await import("../src/components/ActivityView");
 const { OverviewView } = await import("../src/components/OverviewView");
+const { Toast } = await import("../src/components/Toast");
 const {
   cascadeSessionIds,
   groupedSessionRows,
@@ -28,6 +29,7 @@ const {
   primaryWalletSubscription,
 } = await import("../src/components/WalletView");
 const {
+  FailoverDialog,
   StatusView,
   parseStoredProbeRecords,
   parseStoredProbeModels,
@@ -40,7 +42,7 @@ const {
   storedProbeInterval,
   visibleProbeSamples,
 } = await import("../src/components/StatusView");
-const { BLANK_PROFILE_INPUT } = await import("../src/config");
+const { BLANK_PROFILE_INPUT, DEFAULT_SETTINGS } = await import("../src/config");
 const { I18nProvider, MESSAGES } = await import("../src/i18n");
 const {
   computeDivergence,
@@ -49,7 +51,10 @@ const {
   todayRequestCount,
 } = await import("../src/lib/divergence");
 const { formatTokenCount } = await import("../src/lib/format");
-const { mergeProfileUsage } = await import("../src/hooks/useAgentGateController");
+const {
+  isCodexGatewayConflict,
+  mergeProfileUsage,
+} = await import("../src/hooks/useAgentGateController");
 
 function profile(id, name, target, latency = 100) {
   const checkedAt = new Date().toISOString();
@@ -92,6 +97,34 @@ function codexSession(id, parentNativeId) {
     parentNativeId,
   };
 }
+
+describe("gateway error actions", () => {
+  it("只把 Codex 的网关配置冲突引导到恢复官方", () => {
+    expect(isCodexGatewayConflict("Local gateway configuration conflict for codex; route changed"))
+      .toBe(true);
+    expect(isCodexGatewayConflict("Local gateway configuration conflict for claude; token changed"))
+      .toBe(false);
+    expect(isCodexGatewayConflict("Local gateway is unavailable")).toBe(false);
+  });
+
+  it("错误提示完整展示消息与恢复操作", () => {
+    const html = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "zh" },
+      React.createElement(Toast, {
+        toast: {
+          kind: "error",
+          message: "Codex 配置冲突的完整说明",
+          action: { label: "恢复官方", onClick: vi.fn() },
+        },
+        onClose: vi.fn(),
+      }),
+    ));
+
+    expect(html).toContain("Codex 配置冲突的完整说明");
+    expect(html).toContain("恢复官方");
+  });
+});
 
 describe("frontend state boundaries", () => {
   it("钱包导航位于概览之后、密钥之前", () => {
@@ -422,6 +455,43 @@ describe("frontend state boundaries", () => {
     expect(html).toContain(MESSAGES.en.keys.active);
   });
 
+  it("状态页提供按客户端配置的故障切换入口和候选密钥库", () => {
+    const current = profile("00000000-0000-4000-8000-000000000043", "Current", "codex");
+    const standby = profile("00000000-0000-4000-8000-000000000044", "Standby", "codex");
+    const statusHtml = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "zh" },
+      React.createElement(StatusView, {
+        profiles: [current, standby],
+        settings: DEFAULT_SETTINGS,
+        onSettingsChange: vi.fn(),
+      }),
+    ));
+    const dialogHtml = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "zh" },
+      React.createElement(FailoverDialog, {
+        profiles: [current, standby],
+        gateway: { routes: [{ target: "codex", profileId: current.id }] },
+        settings: DEFAULT_SETTINGS,
+        busy: false,
+        onSave: vi.fn(),
+        onClose: vi.fn(),
+      }),
+    ));
+
+    expect(statusHtml).toContain(MESSAGES.zh.status.failover);
+    expect(statusHtml).toContain('aria-haspopup="dialog"');
+    expect(dialogHtml).toContain(MESSAGES.zh.status.failoverTitle);
+    expect(dialogHtml).toContain("Claude Code");
+    expect(dialogHtml).toContain("Codex");
+    expect(dialogHtml).toContain("OpenCode");
+    expect(dialogHtml).toContain("Gemini CLI");
+    expect(dialogHtml).toContain("Current");
+    expect(dialogHtml).toContain("Standby");
+    expect(dialogHtml.match(/class="switch-input"/g)).toHaveLength(4);
+  });
+
   it("钱包固定每 5 分钟刷新，并优先显示每日额度使用率最高的订阅", () => {
     expect(WALLET_AUTO_REFRESH_MS).toBe(300_000);
     expect(WALLET_CHECK_CONCURRENCY).toBe(3);
@@ -510,12 +580,15 @@ describe("frontend state boundaries", () => {
         onApply: vi.fn(),
         onEngage: vi.fn(),
         onRelease: vi.fn(),
+        onRestoreOfficial: vi.fn(),
         onGoActivity: vi.fn(),
       }),
     ));
 
     expect(html.match(/EXPERIMENTAL/g)).toHaveLength(3);
     expect(html).not.toMatch(/CODEX[^<]*EXPERIMENTAL/);
+    expect(html).toContain(MESSAGES.en.overview.restoreOfficial);
+    expect(html.match(/SELECT KEY/g)).toHaveLength(3);
   });
 
   it("同一轮渠道实测会同时发出，并在各自完成时立即回传", async () => {
@@ -615,7 +688,7 @@ describe("frontend state boundaries", () => {
 
     expect(html).toContain("TTFB");
     expect(html).toContain("120 ms");
-    expect(html).not.toContain("TTFC");
+    expect(html).not.toContain("TTFT");
     expect(html).toContain("tint-complete");
   });
 
@@ -638,9 +711,9 @@ describe("frontend state boundaries", () => {
       }),
     ));
 
-    expect(html).toContain("TTFC --");
+    expect(html).toContain("TTFT --");
     expect(html).not.toContain("TTFB");
-    expect(html).not.toContain("TTFC 120 ms");
+    expect(html).not.toContain("TTFT 120 ms");
   });
 
   it("用量事件只替换对应方案，不触发全量状态重建", () => {

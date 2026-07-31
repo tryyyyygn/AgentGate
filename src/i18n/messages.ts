@@ -1,7 +1,7 @@
 /**
  * 简体中文 / 繁體中文（台灣）/ 日本語 / English 四语文案。
  *
- * 固定不译的技术术语：DIVERGENCE / CACHE HIT / TOKENS / TTFC / TTFB / DPAPI /
+ * 固定不译的技术术语：DIVERGENCE / CACHE HIT / TOKENS / TTFT / TTFB / DPAPI /
  * 协议名 / 客户端名 / 状态码。它们是 SG 仪表读数语言的一部分，也是跨语言的共识符号。
  *
  * zh-TW 和 ja 都不是简体的逐词对译，而是按当地开发者的实际说法另写：
@@ -52,6 +52,14 @@ export interface Messages {
     action: string;
     noSamples: string;
     unsupported: string;
+    failover: string;
+    failoverTitle: string;
+    failoverCandidates: string;
+    failoverCurrent: string;
+    failoverSelected: string;
+    failoverNoProfiles: string;
+    enableFailover: string;
+    disableFailover: string;
   };
   gateway: {
     online: string;
@@ -95,6 +103,7 @@ export interface Messages {
     clientDefault: string;
     engage: string;
     release: string;
+    restoreOfficial: string;
     swapProfile: string;
     engaged: string;
     notEngaged: string;
@@ -358,6 +367,8 @@ export interface Messages {
     orderFailed: string;
     gatewayStarted: string;
     gatewayStopped: string;
+    codexGatewayConflict: string;
+    codexOfficialRestored: string;
     portReassigned: string;
     gatewaySkipped: string;
     settingsSaved: string;
@@ -367,6 +378,8 @@ export interface Messages {
     healthAllDone: string;
     autoSwitched: string;
     autoSwitchFailed: string;
+    failoverSwitched: string;
+    failoverFailed: string;
     refreshFailed: string;
     upToDate: string;
     updateCheckFailed: string;
@@ -428,6 +441,14 @@ const zh: Messages = {
     action: "切换",
     noSamples: "等待首轮实测",
     unsupported: "当前版本不支持 Key 实测",
+    failover: "故障切换",
+    failoverTitle: "故障切换设置",
+    failoverCandidates: "允许切换的密钥",
+    failoverCurrent: "当前",
+    failoverSelected: "已选 {count}",
+    failoverNoProfiles: "没有适用于此客户端的密钥",
+    enableFailover: "启用 {client} 故障切换",
+    disableFailover: "关闭 {client} 故障切换",
   },
   gateway: {
     online: "网关运行中",
@@ -471,6 +492,7 @@ const zh: Messages = {
     clientDefault: "沿用客户端",
     engage: "接管",
     release: "断开",
+    restoreOfficial: "恢复官方",
     swapProfile: "选择 Key",
     engaged: "已接管",
     notEngaged: "未接管",
@@ -730,6 +752,8 @@ const zh: Messages = {
     orderFailed: "当前版本不支持方案排序",
     gatewayStarted: "本地网关已启动，并接管已分配的客户端",
     gatewayStopped: "本地网关已停止",
+    codexGatewayConflict: "Codex 仍指向另一个本地网关地址，无法安全自动覆盖。可恢复官方连接，登录状态不会清除",
+    codexOfficialRestored: "Codex 已恢复官方登录，当前登录状态保持不变",
     portReassigned: "端口已换到 {port}",
     gatewaySkipped: "本地网关已停止；已跳过用户修改的 {targets}",
     settingsSaved: "设置已保存",
@@ -739,6 +763,8 @@ const zh: Messages = {
     healthAllDone: "全部检测完成：{reachable} / {total} 个方案可达",
     autoSwitched: "已自动切换到 {url}",
     autoSwitchFailed: "自动检测失败",
+    failoverSwitched: "{client} 已自动切换到「{name}」",
+    failoverFailed: "故障切换失败",
     refreshFailed: "{message}，但界面刷新失败：{error}",
     upToDate: "已是最新版本 {version}",
     updateCheckFailed: "检查更新失败",
@@ -805,6 +831,14 @@ const zhTW: Messages = {
     action: "切換",
     noSamples: "等待第一輪實測",
     unsupported: "目前版本不支援 Key 實測",
+    failover: "故障切換",
+    failoverTitle: "故障切換設定",
+    failoverCandidates: "允許切換的 API Key",
+    failoverCurrent: "目前",
+    failoverSelected: "已選 {count}",
+    failoverNoProfiles: "沒有適用於這個 Client 的 API Key",
+    enableFailover: "啟用 {client} 故障切換",
+    disableFailover: "關閉 {client} 故障切換",
   },
   gateway: {
     online: "Gateway 運行中",
@@ -848,6 +882,7 @@ const zhTW: Messages = {
     clientDefault: "沿用 Client 設定",
     engage: "接管",
     release: "斷開",
+    restoreOfficial: "恢復官方",
     swapProfile: "選 Key",
     engaged: "已接管",
     notEngaged: "未接管",
@@ -1107,6 +1142,8 @@ const zhTW: Messages = {
     orderFailed: "這個版本還不支援 Profile 排序",
     gatewayStarted: "本機 Gateway 已啟動，並接管指定的 Client",
     gatewayStopped: "本機 Gateway 已停止",
+    codexGatewayConflict: "Codex 仍指向另一個本機 Gateway 位址，無法安全自動覆蓋。可恢復官方連線，登入狀態不會清除",
+    codexOfficialRestored: "Codex 已恢復官方登入，目前登入狀態保持不變",
     portReassigned: "Port 已換成 {port}",
     gatewaySkipped: "本機 Gateway 已停止；{targets} 被你改過，跳過不動",
     settingsSaved: "設定已儲存",
@@ -1116,6 +1153,8 @@ const zhTW: Messages = {
     healthAllDone: "全部檢測完成：{reachable} / {total} 個 Profile 可達",
     autoSwitched: "已自動切到 {url}",
     autoSwitchFailed: "自動檢測失敗",
+    failoverSwitched: "{client} 已自動切到「{name}」",
+    failoverFailed: "故障切換失敗",
     refreshFailed: "{message}，但畫面沒刷新成功：{error}",
     upToDate: "已是最新版 {version}",
     updateCheckFailed: "檢查更新失敗",
@@ -1182,6 +1221,14 @@ const ja: Messages = {
     action: "切替",
     noSamples: "初回チェック待ち",
     unsupported: "このバージョンでは Key 実測に未対応",
+    failover: "障害時切替",
+    failoverTitle: "障害時切替の設定",
+    failoverCandidates: "切替を許可するキー",
+    failoverCurrent: "使用中",
+    failoverSelected: "{count} 件選択",
+    failoverNoProfiles: "このクライアントで使えるキーがありません",
+    enableFailover: "{client} の障害時切替を有効化",
+    disableFailover: "{client} の障害時切替を無効化",
   },
   gateway: {
     online: "ゲートウェイ稼働中",
@@ -1225,6 +1272,7 @@ const ja: Messages = {
     clientDefault: "クライアント設定のまま",
     engage: "引き受け",
     release: "解除",
+    restoreOfficial: "公式接続に戻す",
     swapProfile: "キーを選ぶ",
     engaged: "引き受け中",
     notEngaged: "待機中",
@@ -1484,6 +1532,8 @@ const ja: Messages = {
     orderFailed: "このバージョンは並べ替えに未対応です",
     gatewayStarted: "ローカルゲートウェイを起動し、対象のクライアントを引き受けました",
     gatewayStopped: "ローカルゲートウェイを停止しました",
+    codexGatewayConflict: "Codex は別のローカルゲートウェイを参照しているため、安全に上書きできません。公式接続に戻してもログイン状態は維持されます",
+    codexOfficialRestored: "Codex を公式ログインに戻しました。ログイン状態は維持されています",
     portReassigned: "ポートを {port} に変更しました",
     gatewaySkipped: "ローカルゲートウェイを停止しました。{targets} は手動で変更されているため触れていません",
     settingsSaved: "設定を保存しました",
@@ -1493,6 +1543,8 @@ const ja: Messages = {
     healthAllDone: "一括チェック完了：{reachable} / {total} 件のプロファイルが到達可",
     autoSwitched: "{url} に自動で切り替えました",
     autoSwitchFailed: "自動チェックに失敗",
+    failoverSwitched: "{client} を「{name}」へ自動で切り替えました",
+    failoverFailed: "障害時の切替に失敗",
     refreshFailed: "{message}。ただし画面の更新に失敗しました：{error}",
     upToDate: "最新版です {version}",
     updateCheckFailed: "更新の確認に失敗",
@@ -1559,6 +1611,14 @@ const en: Messages = {
     action: "SWITCH",
     noSamples: "AWAITING FIRST PROBE",
     unsupported: "Key probing is not available in this build",
+    failover: "FAILOVER",
+    failoverTitle: "Failover settings",
+    failoverCandidates: "Allowed keys",
+    failoverCurrent: "CURRENT",
+    failoverSelected: "{count} SELECTED",
+    failoverNoProfiles: "No keys support this client",
+    enableFailover: "Enable failover for {client}",
+    disableFailover: "Disable failover for {client}",
   },
   gateway: {
     online: "GATEWAY ONLINE",
@@ -1602,6 +1662,7 @@ const en: Messages = {
     clientDefault: "CLIENT DEFAULT",
     engage: "ENGAGE",
     release: "RELEASE",
+    restoreOfficial: "RESTORE OFFICIAL",
     swapProfile: "SELECT KEY",
     engaged: "ENGAGED",
     notEngaged: "STANDBY",
@@ -1861,6 +1922,8 @@ const en: Messages = {
     orderFailed: "This build does not support reordering",
     gatewayStarted: "Local gateway started and bound to assigned clients",
     gatewayStopped: "Local gateway stopped",
+    codexGatewayConflict: "Codex points to another local gateway, so it cannot be overwritten safely. Restore the official connection without clearing the current login",
+    codexOfficialRestored: "Codex restored to official login; the current session was preserved",
     portReassigned: "Port moved to {port}",
     gatewaySkipped: "Gateway stopped; skipped user-edited {targets}",
     settingsSaved: "Settings saved",
@@ -1870,6 +1933,8 @@ const en: Messages = {
     healthAllDone: "All probes complete: {reachable} / {total} profiles reachable",
     autoSwitched: "Auto-switched to {url}",
     autoSwitchFailed: "Auto probe failed",
+    failoverSwitched: "{client} automatically switched to {name}",
+    failoverFailed: "Failover could not switch keys",
     refreshFailed: "{message}, but the view failed to refresh: {error}",
     upToDate: "Up to date {version}",
     updateCheckFailed: "Update check failed",

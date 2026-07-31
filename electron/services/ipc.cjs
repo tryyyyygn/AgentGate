@@ -22,6 +22,7 @@ const CHANNELS = Object.freeze({
   openConfig: 'agentgate:open-config',
   startGateway: 'agentgate:start-gateway',
   stopGateway: 'agentgate:stop-gateway',
+  restoreCodexOfficial: 'agentgate:restore-codex-official',
   reassignPort: 'agentgate:reassign-port',
   updateSettings: 'agentgate:update-settings',
   listWallets: 'agentgate:list-wallets',
@@ -325,6 +326,10 @@ function registerIpcHandlers({
         skippedTargets: recovery.skippedTargets || [],
       },
     }
+  })
+  handle(CHANNELS.restoreCodexOfficial, async () => {
+    await applyService.restoreCodexOfficial()
+    return getBootstrap()
   })
   handle(CHANNELS.reassignPort, async () => {
     if (!gatewayService) throw new Error('Local gateway is unavailable')

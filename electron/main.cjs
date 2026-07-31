@@ -163,12 +163,15 @@ function createServices() {
     iconPath: path.join(__dirname, '..', 'assets', 'icon.ico'),
     openExternal: (url) => shell.openExternal(url),
   })
+  let autoSwitchService
   const requestMonitor = new RequestMonitorService({
     onChange: (event) => {
       if (!mainWindow || mainWindow.isDestroyed()) return
       mainWindow.webContents.send(CHANNELS.stateChanged, event)
     },
-    onRequestEnded: (entry) => {
+    onRequestEnded: (entry, context) => {
+      const failover = autoSwitchService?.recordRequestResult(entry, context)
+      if (failover) void failover.catch(() => {})
       if (!entry.profileId || !entry.tokenUsage) return
       void profileService.addTokenUsage(entry.profileId, entry.tokenUsage).then(() => {
         if (!mainWindow || mainWindow.isDestroyed()) return
@@ -190,6 +193,7 @@ function createServices() {
     vault,
     requestMonitor,
     onStateChanged: (event) => {
+      autoSwitchService?.resetFailoverFailures()
       // 托盘常驻，即使窗口已隐藏或销毁也要反映网关状态。
       refreshTray()
       if (!mainWindow || mainWindow.isDestroyed()) return
@@ -211,22 +215,24 @@ function createServices() {
     gatewayService,
     gatewayBaselineStore,
   })
-  const autoSwitchService = new AutoSwitchService({
-    profileService,
-    healthService,
-    applyService,
-    gatewayService,
-  })
   const settingsService = new SettingsService({
     store: settingsStore,
     app,
     onChanged: (settings) => {
+      autoSwitchService?.resetFailoverFailures()
       if (!mainWindow || mainWindow.isDestroyed()) return
       mainWindow.webContents.send(CHANNELS.stateChanged, {
         type: 'settings-changed',
         settings,
       })
     },
+  })
+  autoSwitchService = new AutoSwitchService({
+    profileService,
+    healthService,
+    applyService,
+    gatewayService,
+    settingsService,
   })
 
   const updateService = new UpdateService({

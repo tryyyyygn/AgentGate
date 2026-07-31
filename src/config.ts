@@ -70,6 +70,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   startGatewayOnLaunch: true,
   theme: "system",
   language: "system",
+  failover: {
+    claude: { enabled: false, profileIds: [] },
+    codex: { enabled: false, profileIds: [] },
+    opencode: { enabled: false, profileIds: [] },
+    gemini: { enabled: false, profileIds: [] },
+  },
 };
 
 export const EMPTY_BOOTSTRAP: BootstrapData = {

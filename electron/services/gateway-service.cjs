@@ -1240,11 +1240,16 @@ class GatewayService {
       monitorId = undefined
     }
     let monitorEnded = false
-    const endMonitor = (outcome) => {
+    const endMonitor = (outcome, channelFailure) => {
       if (monitorEnded || !monitorId) return
       monitorEnded = true
       try {
-        if (outcome) this.requestMonitor?.end?.(monitorId, { outcome })
+        if (outcome || typeof channelFailure === 'boolean') {
+          this.requestMonitor?.end?.(monitorId, {
+            ...(outcome ? { outcome } : {}),
+            ...(typeof channelFailure === 'boolean' ? { channelFailure } : {}),
+          })
+        }
         else this.requestMonitor?.end?.(monitorId)
       } catch {}
     }
@@ -1257,7 +1262,7 @@ class GatewayService {
         endMonitor('aborted')
         return
       }
-      endMonitor('failed')
+      endMonitor('failed', false)
       rejectRequest(request, response, 502, 'Upstream profile is unavailable')
       return
     }
@@ -1270,7 +1275,7 @@ class GatewayService {
     try {
       destination = upstreamUrl(connection.profile, suffix, incomingUrl.searchParams)
     } catch {
-      endMonitor('failed')
+      endMonitor('failed', false)
       rejectRequest(request, response, 502, 'Upstream URL is invalid')
       return
     }
@@ -1306,7 +1311,7 @@ class GatewayService {
       if (anthropicCountRequest) {
         releaseAnthropicCountBodySlot = this._tryAcquireAnthropicCountBody()
         if (!releaseAnthropicCountBodySlot) {
-          endMonitor('failed')
+          endMonitor('failed', false)
           rejectRequest(request, response, 503,
             'Anthropic token count compatibility capacity is temporarily full')
           return
@@ -1315,7 +1320,7 @@ class GatewayService {
       if (needsResponsesFallbackBody) {
         releaseResponsesBodySlot = this._tryAcquireResponsesFallbackBody()
         if (!releaseResponsesBodySlot) {
-          endMonitor('failed')
+          endMonitor('failed', false)
           rejectRequest(request, response, 503,
             'Responses compatibility capacity is temporarily full')
           return
@@ -1339,7 +1344,7 @@ class GatewayService {
       } catch {
         releaseResponsesBodySlot?.()
         releaseAnthropicCountBodySlot?.()
-        endMonitor(request.aborted ? 'aborted' : 'failed')
+        endMonitor(request.aborted ? 'aborted' : 'failed', false)
         rejectRequest(request, response, 502,
           anthropicCountRequest
             ? 'Anthropic token count compatibility request failed'
@@ -1415,7 +1420,7 @@ class GatewayService {
     } catch {
       releaseResponsesBodySlot?.()
       releaseAnthropicCountBodySlot?.()
-      endMonitor('failed')
+      endMonitor('failed', false)
       rejectRequest(request, response, 502, 'Upstream request configuration is invalid')
       return
     }
@@ -1435,7 +1440,7 @@ class GatewayService {
       releaseAnthropicCountBodySlot?.()
       this.upstreamRequests.delete(upstreamRequest)
       if (!responseReceived) {
-        endMonitor('failed')
+        endMonitor('failed', true)
       }
     })
     upstreamRequest.on('response', (upstreamResponse) => {
@@ -1525,7 +1530,7 @@ class GatewayService {
 
       if (unsupportedTransformedEncoding) {
         clearFallbackTimers()
-        endMonitor('failed')
+        endMonitor('failed', true)
         upstreamResponse.resume()
         response.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
         response.end('Responses compatibility requires an identity-encoded upstream response')
@@ -1542,11 +1547,11 @@ class GatewayService {
       upstreamResponse.once('end', clearFallbackTimers)
       upstreamResponse.once('aborted', () => {
         clearFallbackTimers()
-        endMonitor('aborted')
+        endMonitor('failed', true)
       })
       upstreamResponse.once('error', () => {
         clearFallbackTimers()
-        endMonitor('failed')
+        endMonitor('failed', true)
       })
       const attachMonitor = (stream) => {
         stream.on('data', (chunk) => {
@@ -1586,7 +1591,7 @@ class GatewayService {
           return
         }
         clearFallbackTimers()
-        endMonitor('failed')
+        endMonitor('failed', true)
         if (!response.headersSent) {
           for (const name of response.getHeaderNames()) response.removeHeader(name)
           response.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
@@ -1602,7 +1607,7 @@ class GatewayService {
     upstreamRequest.on('error', () => {
       releaseResponsesBodySlot?.()
       releaseAnthropicCountBodySlot?.()
-      endMonitor('failed')
+      endMonitor('failed', true)
       if (!response.headersSent) {
         response.writeHead(upstreamTimedOut ? 504 : 502, {
           'content-type': 'text/plain; charset=utf-8',
@@ -1619,7 +1624,10 @@ class GatewayService {
       upstreamRequest.destroy()
     })
     response.on('close', () => {
-      if (!response.writableEnded) upstreamRequest.destroy()
+      if (!response.writableEnded) {
+        endMonitor('aborted', false)
+        upstreamRequest.destroy()
+      }
     })
     if (requestBody !== undefined) {
       try {

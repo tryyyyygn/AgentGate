@@ -31,6 +31,10 @@ export function mergeProfileUsage(profiles: Profile[], updated: Profile): Profil
   return found ? next : profiles;
 }
 
+export function isCodexGatewayConflict(message: string): boolean {
+  return /^Local gateway configuration conflict for codex(?:;|$)/i.test(message.trim());
+}
+
 export interface AgentGateController {
   data: BootstrapData;
   busy: BusyAction | null;
@@ -61,6 +65,7 @@ export interface AgentGateController {
   openConfig: (target: ClientTarget) => Promise<void>;
   startGateway: (settings: GatewayStartSettings) => Promise<void>;
   stopGateway: (settings?: GatewayStopSettings) => Promise<void>;
+  restoreCodexOfficial: () => Promise<void>;
   reassignPort: () => Promise<void>;
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>;
   checkForUpdate: () => Promise<void>;
@@ -256,6 +261,20 @@ export function useAgentGateController(): AgentGateController {
       setToast({ kind: "error", message: event.message ?? m.current.toast.autoSwitchFailed });
       return;
     }
+    if (event.type === "failure-switch") {
+      if (event.switched && event.profileName) {
+        setToast({
+          kind: "info",
+          message: fill(m.current.toast.failoverSwitched, {
+            client: CLIENT_META[event.target].short,
+            name: event.profileName,
+          }),
+        });
+      } else {
+        setToast({ kind: "error", message: event.message ?? m.current.toast.failoverFailed });
+      }
+      return;
+    }
     if (event.switched && event.baseUrl) {
       setToast({
         kind: "info",
@@ -265,7 +284,7 @@ export function useAgentGateController(): AgentGateController {
   }), [refreshSilently]);
 
   useEffect(() => {
-    if (!toast) return undefined;
+    if (!toast || toast.action) return undefined;
 
     const timer = window.setTimeout(() => setToast(undefined), DEFAULT_TOAST_DURATION_MS);
     return () => window.clearTimeout(timer);
@@ -685,6 +704,41 @@ export function useAgentGateController(): AgentGateController {
           : m.current.toast.gatewayStopped,
       });
     } catch (error) {
+      const message = describeError(error);
+      if (isCodexGatewayConflict(message)) {
+        await refreshSilently();
+        setToast({
+          kind: "error",
+          message: m.current.toast.codexGatewayConflict,
+          action: {
+            label: m.current.overview.restoreOfficial,
+            onClick: () => {
+              setToast(undefined);
+              void restoreCodexOfficial();
+            },
+          },
+        });
+      } else {
+        setToast({ kind: "error", message });
+        await refreshSilently();
+      }
+    } finally {
+      commandLock.current = false;
+      setBusy(null);
+    }
+  }
+
+  async function restoreCodexOfficial(): Promise<void> {
+    if (commandLock.current) return;
+    commandLock.current = true;
+    setBusy("restore-official");
+    try {
+      requestSequence.current += 1;
+      const next = await api.restoreCodexOfficial();
+      requestSequence.current += 1;
+      mergeBootstrap(next);
+      setToast({ kind: "success", message: m.current.toast.codexOfficialRestored });
+    } catch (error) {
       setToast({ kind: "error", message: describeError(error) });
       await refreshSilently();
     } finally {
@@ -785,6 +839,7 @@ export function useAgentGateController(): AgentGateController {
     openConfig,
     startGateway,
     stopGateway,
+    restoreCodexOfficial,
     reassignPort,
     updateSettings,
     checkForUpdate,

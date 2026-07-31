@@ -59,8 +59,11 @@ export function formatCompactDateTime(value: string): string {
  * @returns 可供提示条展示的错误信息。
  */
 export function describeError(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(
+    /^Error invoking remote method ['"][^'"]+['"]:\s*(?:Error:\s*)?/,
+    "",
+  );
 }
 
 /**

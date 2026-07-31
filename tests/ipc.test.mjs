@@ -93,6 +93,7 @@ function createHarness({ gatewayRoutes = [], gatewayStatus, ...overrides } = {})
       })),
       startGateway: vi.fn().mockResolvedValue(undefined),
       stopGateway,
+      restoreCodexOfficial: vi.fn().mockResolvedValue(undefined),
     },
     gatewayService: {
       // 形状必须跟真的 GatewayService.getPublicState() 一致——上面那条测试会拿真货来比对。
@@ -565,6 +566,18 @@ describe("IPC gateway coordination", () => {
 
     expect(result.gateway.status).toBe("stopped");
     expect(result.gatewayRecovery).toEqual({ skippedTargets: ["codex"] });
+  });
+
+  it("恢复 Codex 官方模式后返回最新主进程状态", async () => {
+    const { handlers, dependencies } = createHarness({
+      gatewayRoutes: [{ target: "codex", profileId: "00000000-0000-4000-8000-000000000901" }],
+    });
+
+    const result = await handlers.get(CHANNELS.restoreCodexOfficial)();
+
+    expect(dependencies.applyService.restoreCodexOfficial).toHaveBeenCalledOnce();
+    expect(result.profiles).toHaveLength(1);
+    expect(result.gateway.routes).toHaveLength(1);
   });
 
   it("网关关闭时删除方案会同时移除引用它的预设路由", async () => {

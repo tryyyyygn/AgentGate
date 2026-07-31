@@ -129,10 +129,10 @@ interface RequestRowProps {
 const RequestRow = memo(function RequestRow({
   request, elapsed, state, m, clock,
 }: RequestRowProps): ReactElement {
-  // 网关看不到模型内部的首 token；该字段是首个非空输出事件，所以诚实标成 TTFC。
+  // 流式请求以首个生成信号（含隐藏推理开始）为 TTFT。
   const contentTiming = request.streaming === true;
   const firstLatency = contentTiming ? request.firstTokenLatencyMs : request.firstByteLatencyMs;
-  const firstLabel = contentTiming ? "TTFC" : "TTFB";
+  const firstLabel = contentTiming ? "TTFT" : "TTFB";
   const reasoning = request.reasoningEffort
     ? REASONING_LABEL[request.reasoningEffort.toLocaleLowerCase()] ?? request.reasoningEffort
     : "DEFAULT";

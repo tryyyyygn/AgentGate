@@ -4,6 +4,8 @@ const REQUIRED_CONSECUTIVE_WINS = 2
 const HEALTH_HISTORY_WINDOW_MS = 60 * 60_000
 const MINIMUM_COMPETING_SAMPLES = 3
 const ERROR_MESSAGE_LIMIT = 240
+const FAILOVER_FAILURE_THRESHOLD = 3
+const FAILOVER_TARGETS = new Set(['claude', 'codex', 'opencode', 'gemini'])
 
 function checkedAtTimestamp(profile) {
   return Math.max(0, ...profile.endpoints.flatMap((endpoint) => {
@@ -91,6 +93,35 @@ function abortedError() {
   return error
 }
 
+function requestFailedByChannel(entry, context = {}) {
+  if (entry.outcome !== 'failed') return false
+  if (context.channelFailure === false) return false
+  if (entry.statusCode === undefined) return context.channelFailure !== false
+  if (entry.statusCode >= 200 && entry.statusCode < 300) {
+    return context.channelFailure === true
+  }
+  return entry.statusCode === 401
+    || entry.statusCode === 403
+    || entry.statusCode === 429
+    || entry.statusCode >= 500
+}
+
+function profileFailoverMetrics(profile, now, probe) {
+  const endpoint = profile.endpoints.find((item) => item.url === profile.baseUrl)
+    || profile.endpoints[0]
+  const metrics = endpoint ? endpointMetrics(endpoint, now) : {
+    sampleCount: 0,
+    availability: 0,
+    medianLatencyMs: Number.POSITIVE_INFINITY,
+  }
+  return {
+    availability: metrics.sampleCount > 0 ? metrics.availability : 1,
+    medianLatencyMs: Number.isFinite(metrics.medianLatencyMs)
+      ? metrics.medianLatencyMs
+      : probe.totalMs,
+  }
+}
+
 /**
  * 在 Agent;Gate 运行期间定时检测 URL 池并更新网关使用的活动端点。
  *
@@ -103,6 +134,7 @@ class AutoSwitchService {
     healthService,
     applyService,
     gatewayService,
+    settingsService,
     tickMs = SCHEDULER_TICK_MS,
     now = () => Date.now(),
   }) {
@@ -110,6 +142,7 @@ class AutoSwitchService {
     this.healthService = healthService
     this.applyService = applyService
     this.gatewayService = gatewayService
+    this.settingsService = settingsService
     this.tickMs = tickMs
     this.now = now
     this.running = false
@@ -120,6 +153,10 @@ class AutoSwitchService {
     this.onChange = () => {}
     this.lastRuns = new Map()
     this.candidates = new Map()
+    this.failures = new Map()
+    this.failoverInFlight = new Map()
+    this.failoverControllers = new Map()
+    this.acceptingFailover = true
   }
 
   /**
@@ -131,6 +168,7 @@ class AutoSwitchService {
   start(onChange = () => {}) {
     if (this.timer) return
     this.onChange = onChange
+    this.acceptingFailover = true
     const generation = ++this.generation
     this.timer = setInterval(() => void this.tick(generation), this.tickMs)
     this.timer.unref?.()
@@ -143,12 +181,15 @@ class AutoSwitchService {
    * @returns {void} 停止后不会保留计时器或防抖候选。
    */
   stop() {
+    this.acceptingFailover = false
     this.generation += 1
     this.activeController?.abort()
+    for (const controller of this.failoverControllers.values()) controller.abort()
     if (this.timer) clearInterval(this.timer)
     this.timer = undefined
     this.lastRuns.clear()
     this.candidates.clear()
+    this.failures.clear()
   }
 
   /**
@@ -161,15 +202,18 @@ class AutoSwitchService {
    */
   async stopAndWait() {
     this.stop()
-    const activeTick = this.activeTick
-    if (!activeTick) return
-    await activeTick.catch(() => {})
+    const pending = [this.activeTick, ...this.failoverInFlight.values()].filter(Boolean)
+    await Promise.allSettled(pending)
   }
 
   assertGeneration(generation, signal) {
     if (signal?.aborted || (generation !== undefined && generation !== this.generation)) {
       throw abortedError()
     }
+  }
+
+  resetFailoverFailures() {
+    this.failures.clear()
   }
 
   /**
@@ -225,13 +269,14 @@ class AutoSwitchService {
         if (!enabledIds.has(id)) this.candidates.delete(id)
       }
 
-      for (const profile of enabledProfiles) {
+      for (const profile of profiles) {
         if (!this.isDue(profile)) continue
         this.lastRuns.set(profile.id, this.now())
         try {
           const event = await this.runProfile(profile.id, {
             generation,
             signal: controller.signal,
+            allowSwitch: profile.autoSwitch.enabled,
           })
           this.assertGeneration(generation, controller.signal)
           this.onChange(event)
@@ -270,6 +315,15 @@ class AutoSwitchService {
     })
     this.assertGeneration(context.generation, context.signal)
     const tested = decision.profile
+    if (context.allowSwitch === false) {
+      this.candidates.delete(profileId)
+      return {
+        type: 'profile-tested',
+        profileId,
+        switched: false,
+        reason: 'monitoring-only',
+      }
+    }
     const current = tested.endpoints.find((endpoint) => endpoint.url === tested.baseUrl)
     const currentFailed = !healthIsReachable(current?.health)
     const candidates = rollingHealth
@@ -368,12 +422,155 @@ class AutoSwitchService {
       } : {}),
     }
   }
+
+  async recordRequestResult(entry, context = {}) {
+    const target = entry?.client
+    if (!this.acceptingFailover || !FAILOVER_TARGETS.has(target)) return
+
+    if (entry.outcome === 'completed') {
+      if (this.failures.get(target)?.profileId === entry.profileId) {
+        this.failures.delete(target)
+      }
+      return
+    }
+    if (!entry.profileId || !requestFailedByChannel(entry, context)) return
+
+    const settings = this.settingsService?.getPublicSettings()
+    const targetSettings = settings?.failover?.[target]
+    const gateway = this.gatewayService?.getPublicState()
+    const route = gateway?.routes?.find((item) => item.target === target)
+    if (!targetSettings?.enabled
+      || gateway?.status !== 'running'
+      || !gateway.engaged?.includes(target)) {
+      this.failures.delete(target)
+      return
+    }
+    if (!targetSettings.profileIds.includes(entry.profileId)
+      || route?.profileId !== entry.profileId) {
+      if (this.failures.get(target)?.profileId === entry.profileId) {
+        this.failures.delete(target)
+      }
+      return
+    }
+
+    const previous = this.failures.get(target)
+    const count = previous?.profileId === entry.profileId ? previous.count + 1 : 1
+    this.failures.set(target, { profileId: entry.profileId, count })
+    if (count < FAILOVER_FAILURE_THRESHOLD) return
+    this.failures.delete(target)
+
+    if (this.failoverInFlight.has(target)) return this.failoverInFlight.get(target)
+    const generation = this.generation
+    const controller = new AbortController()
+    const operation = this.switchFailedTarget(target, entry.profileId, {
+      generation,
+      signal: controller.signal,
+    })
+      .catch((error) => {
+        if (error.name === 'AbortError' || generation !== this.generation) return
+        this.onChange({
+          type: 'failure-switch',
+          target,
+          previousProfileId: entry.profileId,
+          switched: false,
+          message: errorMessage(error),
+        })
+      })
+      .finally(() => {
+        if (this.failoverInFlight.get(target) === operation) {
+          this.failoverInFlight.delete(target)
+          this.failoverControllers.delete(target)
+        }
+      })
+    this.failoverInFlight.set(target, operation)
+    this.failoverControllers.set(target, controller)
+    return operation
+  }
+
+  async switchFailedTarget(target, previousProfileId, context = {}) {
+    this.assertGeneration(context.generation, context.signal)
+    const settings = this.settingsService.getPublicSettings()
+    const targetSettings = settings.failover[target]
+    if (!targetSettings.enabled || !targetSettings.profileIds.includes(previousProfileId)) return
+
+    const allowed = new Set(targetSettings.profileIds)
+    const profiles = await this.profileService.list()
+    this.assertGeneration(context.generation, context.signal)
+    const candidates = profiles.filter((profile) => (
+      profile.id !== previousProfileId
+      && allowed.has(profile.id)
+      && profile.targets.includes(target)
+    ))
+    const probed = (await Promise.all(candidates.map(async (profile) => {
+      try {
+        const probe = await this.healthService.probeProfile(profile.id, undefined, {
+          signal: context.signal,
+        })
+        if (!probe.ok) return undefined
+        return {
+          profile,
+          probe,
+          metrics: profileFailoverMetrics(profile, this.now(), probe),
+        }
+      } catch {
+        return undefined
+      }
+    }))).filter(Boolean)
+    this.assertGeneration(context.generation, context.signal)
+    probed.sort((left, right) => (
+      right.metrics.availability - left.metrics.availability
+      || left.metrics.medianLatencyMs - right.metrics.medianLatencyMs
+      || left.probe.totalMs - right.probe.totalMs
+      || left.profile.name.localeCompare(right.profile.name)
+    ))
+    const selected = probed[0]
+    if (!selected) throw new Error('No allowed failover profile passed the live probe')
+
+    const switched = await this.applyService.withLifecycleLock(async ({ apply }) => {
+      this.assertGeneration(context.generation, context.signal)
+      const latestSettings = this.settingsService.getPublicSettings().failover[target]
+      const gateway = this.gatewayService.getPublicState()
+      const route = gateway.routes.find((item) => item.target === target)
+      if (!latestSettings.enabled
+        || !latestSettings.profileIds.includes(previousProfileId)
+        || !latestSettings.profileIds.includes(selected.profile.id)
+        || gateway.status !== 'running'
+        || !gateway.engaged.includes(target)
+        || route?.profileId !== previousProfileId) return false
+      this.assertGeneration(context.generation, context.signal)
+      let applied = false
+      try {
+        await apply(selected.profile.id, [target])
+        applied = true
+        this.assertGeneration(context.generation, context.signal)
+      } catch (error) {
+        if (applied && (error.name === 'AbortError' || context.signal?.aborted)) {
+          await apply(previousProfileId, [target])
+        }
+        throw error
+      }
+      return true
+    })
+
+    if (!switched) return
+    this.onChange({
+      type: 'failure-switch',
+      target,
+      previousProfileId,
+      profileId: selected.profile.id,
+      profileName: selected.profile.name,
+      switched: true,
+      availability: selected.metrics.availability,
+      medianLatencyMs: selected.metrics.medianLatencyMs,
+    })
+  }
 }
 
 module.exports = {
   HEALTH_HISTORY_WINDOW_MS,
   MINIMUM_COMPETING_SAMPLES,
   MINIMUM_IMPROVEMENT_MS,
+  FAILOVER_FAILURE_THRESHOLD,
   REQUIRED_CONSECUTIVE_WINS,
   SCHEDULER_TICK_MS,
   AutoSwitchService,

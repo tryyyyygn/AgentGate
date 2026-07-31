@@ -16,6 +16,7 @@ const {
   codexProviderState,
   restoreCodexGatewayBaseUrl,
   restoreCodexManagedState,
+  restoreCodexOfficialConfig,
 } = require('./config-utils.cjs')
 const { AUTH_MODE, PROTOCOL, TARGET } = require('./schemas.cjs')
 
@@ -773,6 +774,14 @@ function createAdapters(paths) {
             ? restoreCodexManagedState(source, state, GATEWAY_PROVIDER_ID)
             : restoreCodexGatewayBaseUrl(source, state)
         ), suppliedSources)]
+      },
+      async buildOfficialRestore(state, suppliedSources) {
+        return [await restoreDraft(TARGET.CODEX, paths.codex.config, (source) => {
+          const direct = !state || state.fresh
+            ? source
+            : restoreCodexGatewayBaseUrl(source, state)
+          return restoreCodexOfficialConfig(direct)
+        }, suppliedSources)]
       },
       async verifyManagedState(state, suppliedSources) {
         const sources = await adapterSources(this.paths, suppliedSources)

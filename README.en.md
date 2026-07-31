@@ -28,7 +28,7 @@ Agent;Gate keeps that work in one local Windows app:
 - Point clients at `127.0.0.1` once, then switch profiles without rewriting their config every time.
 - Track relay balances and daily subscription quotas in a separate Wallet page, then import supported keys when needed.
 - Probe channels with the real key and show availability, latency, and recent results.
-- Watch live request state, TTFB/TTFC, token usage, and cache hits.
+- Watch live request state, TTFB/TTFT, token usage, and cache hits.
 - Browse and remove local sessions created by Claude Code, Codex, and OpenCode.
 
 Agent;Gate is not a hosted service or a shared proxy. It has no account system, backend, or telemetry.

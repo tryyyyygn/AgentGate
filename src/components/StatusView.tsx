@@ -7,16 +7,24 @@ import {
   Play,
   Radio,
   RefreshCw,
+  Settings2,
   TriangleAlert,
   X,
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
+import { CLIENT_META, CLIENT_TARGET_ORDER, DEFAULT_SETTINGS } from "../config";
 import { useI18n } from "../i18n";
 import { api } from "../lib/api";
 import { describeError, formatCompactDateTime, formatDuration } from "../lib/format";
-import type { GatewayState, Profile, ProbeResult } from "../types";
+import type {
+  AppSettings,
+  ClientTarget,
+  GatewayState,
+  Profile,
+  ProbeResult,
+} from "../types";
 
 const DEFAULT_INTERVAL_MS = 120_000;
 const MAX_SAMPLES = 60;
@@ -50,6 +58,8 @@ interface StatusViewProps {
   busy?: boolean;
   busyId?: string;
   onApply?: (id: string, targets: Profile["targets"]) => void;
+  settings?: AppSettings;
+  onSettingsChange?: (patch: Partial<AppSettings>) => void;
   active?: boolean;
 }
 
@@ -246,12 +256,177 @@ function StateIcon({ state }: { state: ProbeState }): ReactElement {
   return <Radio size={12} />;
 }
 
+function cloneFailoverSettings(settings: AppSettings): AppSettings["failover"] {
+  return Object.fromEntries(CLIENT_TARGET_ORDER.map((target) => {
+    const current = settings.failover?.[target] ?? DEFAULT_SETTINGS.failover[target];
+    return [target, { enabled: current.enabled, profileIds: [...current.profileIds] }];
+  })) as AppSettings["failover"];
+}
+
+interface FailoverDialogProps {
+  profiles: ReadonlyArray<Profile>;
+  gateway?: Pick<GatewayState, "routes">;
+  settings: AppSettings;
+  busy: boolean;
+  onSave: (failover: AppSettings["failover"]) => void;
+  onClose: () => void;
+}
+
+export function FailoverDialog({
+  profiles,
+  gateway,
+  settings,
+  busy,
+  onSave,
+  onClose,
+}: FailoverDialogProps): ReactElement {
+  const { m, fill } = useI18n();
+  const [draft, setDraft] = useState<AppSettings["failover"]>(() => {
+    const next = cloneFailoverSettings(settings);
+    for (const target of CLIENT_TARGET_ORDER) {
+      const route = gateway?.routes.find((item) => item.target === target);
+      if (!next[target].enabled || !route) continue;
+      if (!next[target].profileIds.includes(route.profileId)) {
+        next[target].profileIds.push(route.profileId);
+      }
+    }
+    return next;
+  });
+
+  function setEnabled(target: ClientTarget, enabled: boolean): void {
+    setDraft((current) => {
+      const route = gateway?.routes.find((item) => item.target === target);
+      const profileIds = [...current[target].profileIds];
+      if (enabled && route && !profileIds.includes(route.profileId)) profileIds.push(route.profileId);
+      return { ...current, [target]: { enabled, profileIds } };
+    });
+  }
+
+  function setProfileAllowed(target: ClientTarget, profileId: string, allowed: boolean): void {
+    setDraft((current) => {
+      const profileIds = allowed
+        ? [...new Set([...current[target].profileIds, profileId])]
+        : current[target].profileIds.filter((id) => id !== profileId);
+      return { ...current, [target]: { ...current[target], profileIds } };
+    });
+  }
+
+  return (
+    <div
+      className="editor-layer"
+      role="dialog"
+      aria-modal="true"
+      aria-label={m.status.failoverTitle}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || busy) return;
+        event.preventDefault();
+        onClose();
+      }}
+    >
+      <button
+        type="button"
+        className="editor-scrim"
+        aria-label={m.editor.close}
+        disabled={busy}
+        onClick={onClose}
+      />
+      <form
+        className="editor-dialog failover-dialog"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSave(draft);
+        }}
+      >
+        <header className="editor-head">
+          <h2>{m.status.failoverTitle}</h2>
+          <button
+            type="button"
+            className="editor-close"
+            aria-label={m.editor.close}
+            disabled={busy}
+            onClick={onClose}
+          >
+            <X size={15} />
+          </button>
+        </header>
+        <div className="editor-body failover-body">
+          {CLIENT_TARGET_ORDER.map((target) => {
+            const targetSettings = draft[target];
+            const route = gateway?.routes.find((item) => item.target === target);
+            const compatible = profiles.filter((profile) => profile.targets.includes(target));
+            const toggleLabel = fill(
+              targetSettings.enabled ? m.status.disableFailover : m.status.enableFailover,
+              { client: CLIENT_META[target].label },
+            );
+            return (
+              <section className="failover-client" key={target}>
+                <header className="failover-client-head">
+                  <div>
+                    <strong>{CLIENT_META[target].label}</strong>
+                    <span>{fill(m.status.failoverSelected, { count: targetSettings.profileIds.length })}</span>
+                  </div>
+                  <label className="failover-switch" data-hint={toggleLabel}>
+                    <input
+                      type="checkbox"
+                      className="switch-input"
+                      checked={targetSettings.enabled}
+                      disabled={busy}
+                      aria-label={toggleLabel}
+                      onChange={(event) => setEnabled(target, event.target.checked)}
+                    />
+                    <span className={`kd-switch ${targetSettings.enabled ? "checked" : ""}`} aria-hidden="true"><span /></span>
+                  </label>
+                </header>
+                <div className="failover-candidate-head">
+                  <span>{m.status.failoverCandidates}</span>
+                </div>
+                {compatible.length === 0 ? (
+                  <p className="failover-empty">{m.status.failoverNoProfiles}</p>
+                ) : (
+                  <div className="failover-profile-list">
+                    {compatible.map((profile) => {
+                      const current = route?.profileId === profile.id;
+                      const checked = targetSettings.profileIds.includes(profile.id);
+                      return (
+                        <label key={profile.id}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={busy || (targetSettings.enabled && current)}
+                            onChange={(event) => setProfileAllowed(target, profile.id, event.target.checked)}
+                          />
+                          <span title={profile.name}>{profile.name}</span>
+                          {current && <small>{m.status.failoverCurrent}</small>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            );
+          })}
+        </div>
+        <footer className="editor-foot">
+          <button type="button" className="btn-ghost" disabled={busy} onClick={onClose}>
+            {m.editor.cancel}
+          </button>
+          <button type="submit" className="btn-primary" disabled={busy}>
+            {m.editor.save}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
 export function StatusView({
   profiles,
   gateway,
   busy = false,
   busyId,
   onApply,
+  settings = DEFAULT_SETTINGS,
+  onSettingsChange,
   active = true,
 }: StatusViewProps): ReactElement {
   const { locale, m, fill } = useI18n();
@@ -263,6 +438,7 @@ export function StatusView({
   const [running, setRunning] = useState(false);
   const [nextProbeAt, setNextProbeAt] = useState(() => Date.now() + intervalMs);
   const [clockMs, setClockMs] = useState(Date.now);
+  const [failoverOpen, setFailoverOpen] = useState(false);
   const profilesRef = useRef(profiles);
   const disabledRef = useRef(disabledIds);
   const probeModelsRef = useRef(probeModels);
@@ -449,6 +625,17 @@ export function StatusView({
             <h1>{m.status.title}</h1>
           </div>
           <div className="status-controls">
+            <button
+              type="button"
+              className="ghost-pill status-failover"
+              aria-haspopup="dialog"
+              aria-expanded={failoverOpen}
+              disabled={!onSettingsChange}
+              onClick={() => setFailoverOpen(true)}
+            >
+              <Settings2 size={13} />
+              {m.status.failover}
+            </button>
             <label className="status-interval">
               <Clock3 size={13} />
               <span>{m.status.interval}</span>
@@ -643,6 +830,19 @@ export function StatusView({
           </div>
         )}
       </div>
+      {failoverOpen && (
+        <FailoverDialog
+          profiles={profiles}
+          gateway={gateway}
+          settings={settings}
+          busy={busy}
+          onClose={() => setFailoverOpen(false)}
+          onSave={(failover) => {
+            onSettingsChange?.({ failover });
+            setFailoverOpen(false);
+          }}
+        />
+      )}
     </main>
   );
 }

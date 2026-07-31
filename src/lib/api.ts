@@ -796,6 +796,32 @@ const mockBridge: AgentGateBridge = {
     return clone({ profiles: mockProfiles, clients: mockClients, history: mockHistory, gateway: mockGateway });
   },
 
+  async restoreCodexOfficial(): Promise<BootstrapData> {
+    const target = "codex";
+    delete mockClientBaselines[target];
+    mockClients = mockClients.map((client) => {
+      if (client.target !== target) return client;
+      const { activeProfileId, activeProfileName, baseUrl, drifted, viaGateway, ...official } = client;
+      void activeProfileId;
+      void activeProfileName;
+      void baseUrl;
+      void drifted;
+      void viaGateway;
+      return official;
+    });
+    const routes = mockGateway.routes.filter((route) => route.target !== target);
+    const targets = mockGateway.targets.filter((item) => item !== target);
+    const engaged = mockGateway.engaged.filter((item) => item !== target);
+    mockGateway = {
+      ...mockGateway,
+      status: engaged.length > 0 ? "running" : "stopped",
+      targets,
+      engaged,
+      routes,
+    };
+    return clone({ profiles: mockProfiles, clients: mockClients, history: mockHistory, gateway: mockGateway });
+  },
+
   async updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
     mockSettings = { ...mockSettings, ...patch };
     return clone(mockSettings);

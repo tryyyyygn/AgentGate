@@ -413,6 +413,119 @@ class ApplyService {
     }
   }
 
+  /** 恢复 Codex 官方登录模式，并永久解除它的网关路由和启动恢复意图。 */
+  async restoreCodexOfficial() {
+    if (!this.gatewayService) throw new Error('Local gateway is unavailable')
+    return this.serial.run(() => this._restoreCodexOfficialLocked())
+  }
+
+  async _restoreCodexOfficialLocked() {
+    const adapter = this.adapters[TARGET.CODEX]
+    if (!adapter || typeof adapter.buildOfficialRestore !== 'function') {
+      throw new Error('Codex official restoration is unavailable')
+    }
+
+    const beforeGateway = this.gatewayService.getPublicState()
+    const baselineData = GatewayBaselineStoreSchema.parse(await this.gatewayBaselineStore.read())
+    const storedBaseline = baselineData.baselines[TARGET.CODEX]
+    let baseline
+    if (storedBaseline) {
+      try {
+        baseline = JSON.parse(this.vault.decrypt(storedBaseline.encryptedState))
+      } catch (error) {
+        throw new Error('Cannot unlock the pre-gateway baseline for codex', { cause: error })
+      }
+    }
+
+    const current = await readAdapterSources(adapter, baseline)
+    let restorableBaseline = baseline
+    if (baseline && !baseline.fresh && typeof adapter.gatewayOwnership === 'function') {
+      let ownership = GATEWAY_OWNERSHIP.RELEASED
+      try {
+        ownership = await adapter.gatewayOwnership(
+          { baseUrl: this._gatewayLocalBaseUrl(beforeGateway, TARGET.CODEX) },
+          this.gatewayService.localToken,
+          current.sources,
+          { gateway: true, baseline },
+        )
+      } catch {
+        ownership = GATEWAY_OWNERSHIP.RELEASED
+      }
+      if (ownership !== GATEWAY_OWNERSHIP.OWNED) restorableBaseline = undefined
+    }
+    const drafts = await adapter.buildOfficialRestore(restorableBaseline, current.snapshotSources)
+    const changedDrafts = drafts.filter((item) => item.before.hash !== item.afterHash)
+    let configCommitted = false
+    let routeSnapshot
+
+    try {
+      await this._commitDrafts(drafts)
+      configCommitted = true
+      routeSnapshot = await this.gatewayService.unassignRoutes([TARGET.CODEX])
+
+      if (storedBaseline) {
+        const nextBaselines = { ...baselineData.baselines }
+        delete nextBaselines[TARGET.CODEX]
+        await this.gatewayBaselineStore.write({
+          version: GATEWAY_BASELINE_VERSION,
+          baselines: nextBaselines,
+        })
+      }
+
+      const state = this.gatewayService.getPublicState()
+      if ((state.status === 'running' || state.status === 'starting')
+        && state.engaged.length === 0) {
+        await this.gatewayService.stop({ clearRoutes: false, resumeTargets: [] })
+      }
+      return this.gatewayService.getPublicState()
+    } catch (error) {
+      let rollbackComplete = true
+
+      if (routeSnapshot) {
+        try {
+          await this.gatewayBaselineStore.write(baselineData)
+        } catch {
+          rollbackComplete = false
+        }
+        try {
+          await this.gatewayService.restoreRoutes(routeSnapshot)
+        } catch {
+          rollbackComplete = false
+        }
+      }
+
+      for (const item of configCommitted ? changedDrafts.reverse() : []) {
+        try {
+          const restored = await restoreSnapshotIfCurrent(item.before, {
+            existed: true,
+            hash: item.afterHash,
+          })
+          if (!restored) rollbackComplete = false
+        } catch {
+          rollbackComplete = false
+        }
+      }
+
+      if (routeSnapshot && beforeGateway.status === 'running'
+        && this.gatewayService.getPublicState().status !== 'running') {
+        try {
+          await this.gatewayService.start({
+            port: beforeGateway.port,
+            engage: routeSnapshot.engaged,
+            resumeTargets: routeSnapshot.resumeTargets,
+          })
+        } catch {
+          rollbackComplete = false
+        }
+      }
+
+      if (!rollbackComplete) {
+        throw new Error('Codex official restoration failed and automatic rollback was incomplete')
+      }
+      throw error
+    }
+  }
+
   /**
    * 启动时修复上次进程留下的接管事实，再按独立的恢复意图决定是否重新接管。
    *
