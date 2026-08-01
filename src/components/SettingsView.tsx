@@ -8,11 +8,14 @@ import {
   ShieldCheck,
   Sun,
   SunMoon,
+  RotateCcw,
 } from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
+import { CLIENT_META } from "../config";
 import { LOCALE_LABELS, useI18n } from "../i18n";
+import { formatDateTime } from "../lib/format";
 import type { Messages } from "../i18n";
-import type { AppLanguage, AppSettings, AppTheme, UpdateState } from "../types";
+import type { AppLanguage, AppSettings, AppTheme, HistoryEntry, UpdateState } from "../types";
 
 interface SettingToggleProps {
   title: string;
@@ -61,6 +64,8 @@ interface SettingsViewProps {
   onCheckUpdate: () => void;
   onDownloadUpdate: () => void;
   onInstallUpdate: () => void;
+  history?: ReadonlyArray<HistoryEntry>;
+  onUndoHistory?: (entry: HistoryEntry) => void;
 }
 
 /** 更新区块：显示当前版本、检查更新与下载安装入口。 */
@@ -127,6 +132,24 @@ function UpdateRow({
   );
 }
 
+function historyStatusLabel(entry: HistoryEntry, m: Messages): string {
+  if (entry.status === "undone") return m.config.historyUndone;
+  if (entry.status === "superseded") return m.config.historySuperseded;
+  if (entry.status === "rolled-back") return m.config.historyRolledBack;
+  if (entry.status === "failed" || !entry.success) return m.config.historyFailed;
+  return m.config.historyApplied;
+}
+
+function historyStatusTone(entry: HistoryEntry): string {
+  if (entry.status === "failed" || entry.status === "rolled-back" || !entry.success) return "tier-bad";
+  if (entry.status === "superseded") return "tier-warn";
+  return "tier-good";
+}
+
+function historyTargetLabel(target: HistoryEntry["targets"][number]): string {
+  return CLIENT_META[target]?.label ?? target;
+}
+
 /** 设置页：启动与后台开关、语言、主题选择、软件更新和密钥安全说明。 */
 export function SettingsView({
   active = true,
@@ -138,8 +161,10 @@ export function SettingsView({
   onCheckUpdate,
   onDownloadUpdate,
   onInstallUpdate,
+  history = [],
+  onUndoHistory,
 }: SettingsViewProps): ReactElement {
-  const { m } = useI18n();
+  const { locale, m, fill } = useI18n();
   return (
     <main className="page-scroll" aria-label={m.config.title} hidden={!active}>
       <div className="page-inner narrow">
@@ -217,6 +242,42 @@ export function SettingsView({
           <ShieldCheck size={14} />
           <span>{m.config.security}</span>
         </p>
+        <section className="history-panel rise-2" aria-label={m.config.history}>
+          <div className="history-panel-head">
+            <div>
+              <span className="kicker">AUDIT LOG</span>
+              <h2>{m.config.history}</h2>
+            </div>
+            <span>{history.length}</span>
+          </div>
+          {history.length === 0 ? (
+            <p className="history-empty">{m.config.historyEmpty}</p>
+          ) : (
+            <div className="history-list">
+              {history.slice(0, 12).map((entry) => (
+                <article className="history-item" key={entry.id}>
+                  <div className="history-item-main">
+                    <strong>{entry.profileName}</strong>
+                    <span>{entry.targets.map(historyTargetLabel).join(" · ")}</span>
+                    <small>{formatDateTime(entry.createdAt, locale)} · {fill(m.config.historySource, {
+                      source: entry.source === "auto" ? m.config.historyAuto : m.config.historyManual,
+                    })} · {entry.connectionMode === "gateway" ? m.config.historyGateway : m.config.historyDirect}</small>
+                  </div>
+                  <div className="history-item-action">
+                    <span className={historyStatusTone(entry)}>
+                      {historyStatusLabel(entry, m)}
+                    </span>
+                    {entry.canUndo && onUndoHistory && (
+                      <button type="button" className="icon-ghost" title={m.config.historyUndo} aria-label={m.config.historyUndo} disabled={busy} onClick={() => onUndoHistory(entry)}>
+                        <RotateCcw size={13} />
+                      </button>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </main>
   );

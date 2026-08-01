@@ -120,6 +120,7 @@ export interface HistoryEntry {
   profileName: string;
   targets: ClientTarget[];
   createdAt: string;
+  status: "applied" | "undone" | "superseded" | "rolled-back" | "failed";
   success: boolean;
   message?: string;
   canUndo: boolean;
@@ -194,6 +195,69 @@ export interface AppSettings {
   theme: AppTheme;
   language: AppLanguage;
   failover: Record<ClientTarget, ClientFailoverSettings>;
+}
+
+export type AutoSwitchDecisionReason =
+  | "idle"
+  | "monitoring-only"
+  | "already-best"
+  | "no-reachable-endpoint"
+  | "latency-threshold"
+  | "warming-candidate"
+  | "current-failed"
+  | "better-health-score"
+  | "legacy-latency-win"
+  | "probe-failed"
+  | "disabled"
+  | "not-engaged"
+  | "current-not-allowed"
+  | "cooldown"
+  | "failure-counting"
+  | "probing-candidates"
+  | "no-candidate"
+  | "route-changed"
+  | "switched"
+  | "healthy";
+
+export interface AutoSwitchProfileDecision {
+  reason: AutoSwitchDecisionReason;
+  switched?: boolean;
+  checkedAt?: string;
+  message?: string;
+  availability?: number;
+  medianLatencyMs?: number;
+}
+
+export interface AutoSwitchExcludedProfile {
+  profileId: string;
+  reason: "current" | "not-allowed" | "incompatible" | "probe-failed";
+}
+
+export interface AutoSwitchFailoverDecision {
+  enabled: boolean;
+  failureCount: number;
+  failureThreshold: number;
+  reason: AutoSwitchDecisionReason;
+  at?: string;
+  profileId?: string;
+  previousProfileId?: string;
+  profileName?: string;
+  availability?: number;
+  medianLatencyMs?: number;
+  message?: string;
+  excluded: AutoSwitchExcludedProfile[];
+  cooldownUntil?: string;
+  history: Array<{
+    at: string;
+    reason: AutoSwitchDecisionReason;
+    profileId?: string;
+    previousProfileId?: string;
+  }>;
+}
+
+export interface AutoSwitchPublicState {
+  profiles: Record<string, AutoSwitchProfileDecision>;
+  failover: Record<ClientTarget, AutoSwitchFailoverDecision>;
 }
 
 export type WalletTemplate = "sub2api" | "new-api" | "one-api";
@@ -351,6 +415,10 @@ export type StateChangedEvent =
       message?: string;
     }
   | {
+      type: "auto-switch-decision";
+      autoSwitch: AutoSwitchPublicState;
+    }
+  | {
       type: "gateway-state-changed";
       gateway: GatewayRuntimeEvent;
     }
@@ -381,6 +449,7 @@ export interface BootstrapData {
   history: HistoryEntry[];
   gateway: GatewayState;
   settings?: AppSettings;
+  autoSwitch?: AutoSwitchPublicState;
   activeRequests?: ActiveRequest[];
   /** activeRequests 对应的请求监控版本；旧 preload/ mock 可省略。 */
   activeRequestsRevision?: number;

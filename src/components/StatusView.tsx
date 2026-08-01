@@ -14,12 +14,15 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
-import { CLIENT_META, CLIENT_TARGET_ORDER, DEFAULT_SETTINGS } from "../config";
+import { CLIENT_META, CLIENT_TARGET_ORDER, DEFAULT_SETTINGS, PROTOCOL_META } from "../config";
 import { useI18n } from "../i18n";
 import { api } from "../lib/api";
 import { describeError, formatCompactDateTime, formatDuration } from "../lib/format";
+import { ConfirmDialog } from "./ConfirmDialog";
 import type {
   AppSettings,
+  AutoSwitchDecisionReason,
+  AutoSwitchPublicState,
   ClientTarget,
   GatewayState,
   Profile,
@@ -59,6 +62,7 @@ interface StatusViewProps {
   busyId?: string;
   onApply?: (id: string, targets: Profile["targets"]) => void;
   settings?: AppSettings;
+  autoSwitch?: AutoSwitchPublicState;
   onSettingsChange?: (patch: Partial<AppSettings>) => void;
   active?: boolean;
 }
@@ -256,6 +260,35 @@ function StateIcon({ state }: { state: ProbeState }): ReactElement {
   return <Radio size={12} />;
 }
 
+export function decisionReasonLabel(
+  reason: AutoSwitchDecisionReason,
+  m: ReturnType<typeof useI18n>["m"],
+): string {
+  const labels: Partial<Record<AutoSwitchDecisionReason, string>> = {
+    idle: m.status.decisionIdle,
+    "monitoring-only": m.status.decisionMonitoringOnly,
+    disabled: m.status.decisionDisabled,
+    "not-engaged": m.status.decisionNotEngaged,
+    "current-not-allowed": m.status.decisionCurrentNotAllowed,
+    "failure-counting": m.status.decisionFailureCounting,
+    "probing-candidates": m.status.decisionProbingCandidates,
+    "no-candidate": m.status.decisionNoCandidate,
+    "probe-failed": m.status.decisionProbeFailed,
+    switched: m.status.decisionSwitched,
+    cooldown: m.status.decisionCooling,
+    healthy: m.status.decisionHealthy,
+    "route-changed": m.status.decisionRouteChanged,
+    "already-best": m.status.decisionAlreadyBest,
+    "no-reachable-endpoint": m.status.decisionNoReachableEndpoint,
+    "warming-candidate": m.status.decisionWarmingCandidate,
+    "latency-threshold": m.status.decisionLatencyThreshold,
+    "current-failed": m.status.decisionCurrentFailed,
+    "better-health-score": m.status.decisionBetterHealthScore,
+    "legacy-latency-win": m.status.decisionLegacyLatencyWin,
+  };
+  return labels[reason] ?? reason;
+}
+
 function cloneFailoverSettings(settings: AppSettings): AppSettings["failover"] {
   return Object.fromEntries(CLIENT_TARGET_ORDER.map((target) => {
     const current = settings.failover?.[target] ?? DEFAULT_SETTINGS.failover[target];
@@ -263,10 +296,33 @@ function cloneFailoverSettings(settings: AppSettings): AppSettings["failover"] {
   })) as AppSettings["failover"];
 }
 
+export function failoverSettingsChanged(
+  initial: AppSettings["failover"],
+  draft: AppSettings["failover"],
+): boolean {
+  return JSON.stringify(initial) !== JSON.stringify(draft);
+}
+
+function buildFailoverDraft(
+  settings: AppSettings,
+  gateway?: Pick<GatewayState, "routes">,
+): AppSettings["failover"] {
+  const next = cloneFailoverSettings(settings);
+  for (const target of CLIENT_TARGET_ORDER) {
+    const route = gateway?.routes.find((item) => item.target === target);
+    if (!next[target].enabled || !route) continue;
+    if (!next[target].profileIds.includes(route.profileId)) {
+      next[target].profileIds.push(route.profileId);
+    }
+  }
+  return next;
+}
+
 interface FailoverDialogProps {
   profiles: ReadonlyArray<Profile>;
   gateway?: Pick<GatewayState, "routes">;
   settings: AppSettings;
+  autoSwitch?: AutoSwitchPublicState;
   busy: boolean;
   onSave: (failover: AppSettings["failover"]) => void;
   onClose: () => void;
@@ -276,22 +332,15 @@ export function FailoverDialog({
   profiles,
   gateway,
   settings,
+  autoSwitch,
   busy,
   onSave,
   onClose,
 }: FailoverDialogProps): ReactElement {
   const { m, fill } = useI18n();
-  const [draft, setDraft] = useState<AppSettings["failover"]>(() => {
-    const next = cloneFailoverSettings(settings);
-    for (const target of CLIENT_TARGET_ORDER) {
-      const route = gateway?.routes.find((item) => item.target === target);
-      if (!next[target].enabled || !route) continue;
-      if (!next[target].profileIds.includes(route.profileId)) {
-        next[target].profileIds.push(route.profileId);
-      }
-    }
-    return next;
-  });
+  const initialDraft = useRef(buildFailoverDraft(settings, gateway));
+  const [draft, setDraft] = useState(() => initialDraft.current);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   function setEnabled(target: ClientTarget, enabled: boolean): void {
     setDraft((current) => {
@@ -311,6 +360,15 @@ export function FailoverDialog({
     });
   }
 
+  function requestClose(): void {
+    if (busy) return;
+    if (failoverSettingsChanged(initialDraft.current, draft)) {
+      setConfirmDiscard(true);
+      return;
+    }
+    onClose();
+  }
+
   return (
     <div
       className="editor-layer"
@@ -318,9 +376,10 @@ export function FailoverDialog({
       aria-modal="true"
       aria-label={m.status.failoverTitle}
       onKeyDown={(event) => {
-        if (event.key !== "Escape" || busy) return;
+        if (event.key !== "Escape" || busy || confirmDiscard) return;
         event.preventDefault();
-        onClose();
+        event.stopPropagation();
+        requestClose();
       }}
     >
       <button
@@ -328,7 +387,7 @@ export function FailoverDialog({
         className="editor-scrim"
         aria-label={m.editor.close}
         disabled={busy}
-        onClick={onClose}
+        onClick={requestClose}
       />
       <form
         className="editor-dialog failover-dialog"
@@ -344,7 +403,7 @@ export function FailoverDialog({
             className="editor-close"
             aria-label={m.editor.close}
             disabled={busy}
-            onClick={onClose}
+            onClick={requestClose}
           >
             <X size={15} />
           </button>
@@ -353,7 +412,10 @@ export function FailoverDialog({
           {CLIENT_TARGET_ORDER.map((target) => {
             const targetSettings = draft[target];
             const route = gateway?.routes.find((item) => item.target === target);
-            const compatible = profiles.filter((profile) => profile.targets.includes(target));
+            const compatible = profiles.filter((profile) => (
+              profile.targets.includes(target) && PROTOCOL_META[profile.protocol].compatible.includes(target)
+            ));
+            const decision = autoSwitch?.failover[target];
             const toggleLabel = fill(
               targetSettings.enabled ? m.status.disableFailover : m.status.enableFailover,
               { client: CLIENT_META[target].label },
@@ -377,6 +439,25 @@ export function FailoverDialog({
                     <span className={`kd-switch ${targetSettings.enabled ? "checked" : ""}`} aria-hidden="true"><span /></span>
                   </label>
                 </header>
+                {decision && (
+                  <div className="failover-decision" aria-live="polite">
+                    <div className="failover-decision-line">
+                      <span>{decisionReasonLabel(decision.reason, m)}</span>
+                      <span>{fill(m.status.decisionFailureCount, {
+                        count: decision.failureCount,
+                        threshold: decision.failureThreshold,
+                      })}</span>
+                    </div>
+                    {decision.cooldownUntil && (
+                      <span>{fill(m.status.decisionCooldown, {
+                        time: formatCompactDateTime(decision.cooldownUntil),
+                      })}</span>
+                    )}
+                    {decision.excluded.length > 0 && (
+                      <span>{fill(m.status.decisionExcluded, { count: decision.excluded.length })}</span>
+                    )}
+                  </div>
+                )}
                 <div className="failover-candidate-head">
                   <span>{m.status.failoverCandidates}</span>
                 </div>
@@ -407,7 +488,7 @@ export function FailoverDialog({
           })}
         </div>
         <footer className="editor-foot">
-          <button type="button" className="btn-ghost" disabled={busy} onClick={onClose}>
+          <button type="button" className="btn-ghost" disabled={busy} onClick={requestClose}>
             {m.editor.cancel}
           </button>
           <button type="submit" className="btn-primary" disabled={busy}>
@@ -415,6 +496,20 @@ export function FailoverDialog({
           </button>
         </footer>
       </form>
+      {confirmDiscard && (
+        <ConfirmDialog
+          title={m.confirm.discardTitle}
+          message={m.confirm.discardMessage}
+          confirmLabel={m.confirm.discardConfirm}
+          cancelLabel={m.confirm.cancel}
+          danger
+          onConfirm={() => {
+            setConfirmDiscard(false);
+            onClose();
+          }}
+          onCancel={() => setConfirmDiscard(false)}
+        />
+      )}
     </div>
   );
 }
@@ -426,6 +521,7 @@ export function StatusView({
   busyId,
   onApply,
   settings = DEFAULT_SETTINGS,
+  autoSwitch,
   onSettingsChange,
   active = true,
 }: StatusViewProps): ReactElement {
@@ -835,6 +931,7 @@ export function StatusView({
           profiles={profiles}
           gateway={gateway}
           settings={settings}
+          autoSwitch={autoSwitch}
           busy={busy}
           onClose={() => setFailoverOpen(false)}
           onSave={(failover) => {

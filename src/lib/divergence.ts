@@ -66,7 +66,7 @@ function tierOf(ratio: number): DivergenceTier {
  * 的状态」，因此天然在 1.0 附近浮动：1.68 表示比平时慢 68%，0.87 表示今天更快。
  *
  * 分子分母都取自无凭据 HEAD 探测，不含模型推理时间，所以不会被「推理强度高所以
- * 首字慢」这类与线路无关的因素污染。
+ * 首 token 慢」这类与线路无关的因素污染。
  *
  * @param profiles 全部方案。
  * @param gateway 当前网关状态；未运行或无路由时无分歧率可言。

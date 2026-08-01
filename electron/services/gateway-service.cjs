@@ -1601,7 +1601,7 @@ class GatewayService {
         }
       })
       // 同步客户端的 Responses 请求在上游已经是 SSE；监控原始流，才能记录
-      // 真正的首个可见正文事件，而不是等收拢后的完整 JSON 才误报“首字”。
+      // 监听原始流以记录首个有效生成事件，而不是等收拢后的完整 JSON 才误报首 token。
       attachMonitor(aggregatedResponse ? upstreamResponse : transform)
     })
     upstreamRequest.on('error', () => {

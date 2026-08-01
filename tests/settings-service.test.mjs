@@ -64,6 +64,31 @@ describe('SettingsService', () => {
     })
   })
 
+  it('故障切换对象缺少单个客户端字段时也补上该客户端默认值', async () => {
+    const legacy = defaultSettings()
+    delete legacy.failover.gemini
+    const service = new SettingsService({
+      store: memoryStore(legacy),
+      app: { setLoginItemSettings: vi.fn() },
+    })
+
+    await expect(service.initialize()).resolves.toMatchObject({
+      failover: {
+        gemini: { enabled: false, profileIds: [] },
+      },
+    })
+  })
+
+  it('SettingsSchema 直接读取缺少单个客户端字段的旧文件时也能迁移', () => {
+    const legacy = defaultSettings()
+    delete legacy.failover.gemini
+
+    expect(SettingsSchema.parse(legacy).failover.gemini).toEqual({
+      enabled: false,
+      profileIds: [],
+    })
+  })
+
   it('按客户端保存故障切换开关和候选库', async () => {
     const app = { setLoginItemSettings: vi.fn() }
     const service = new SettingsService({ store: memoryStore(), app, executablePath: 'D:\\Keydeck.exe' })
@@ -86,6 +111,95 @@ describe('SettingsService', () => {
         codex: { enabled: true, profileIds: ['not-a-profile-id'] },
       },
     })).rejects.toThrow()
+  })
+
+  it('局部更新一个客户端时保留其他客户端的故障切换设置', async () => {
+    const first = '00000000-0000-4000-8000-000000000101'
+    const second = '00000000-0000-4000-8000-000000000102'
+    const initial = defaultSettings()
+    initial.failover.claude = { enabled: true, profileIds: [first] }
+    initial.failover.codex = { enabled: true, profileIds: [second] }
+    const service = new SettingsService({
+      store: memoryStore(initial),
+      app: { setLoginItemSettings: vi.fn() },
+    })
+    await service.initialize()
+
+    const result = await service.update({
+      failover: { codex: { enabled: false } },
+    })
+
+    expect(result.failover).toEqual({
+      claude: { enabled: true, profileIds: [first] },
+      codex: { enabled: false, profileIds: [second] },
+      opencode: { enabled: false, profileIds: [] },
+      gemini: { enabled: false, profileIds: [] },
+    })
+  })
+
+  it('初始化时过滤已经删除的方案 ID，并把清理结果持久化', async () => {
+    const first = '00000000-0000-4000-8000-000000000101'
+    const deleted = '00000000-0000-4000-8000-000000000102'
+    const stored = defaultSettings()
+    stored.failover.codex = { enabled: true, profileIds: [first, deleted] }
+    const store = memoryStore(stored)
+    const app = { setLoginItemSettings: vi.fn() }
+    const service = new SettingsService({
+      store,
+      app,
+      getProfileIds: vi.fn(async () => [first]),
+    })
+
+    await expect(service.initialize()).resolves.toMatchObject({
+      failover: {
+        codex: { enabled: true, profileIds: [first] },
+      },
+    })
+    expect(store.write).toHaveBeenCalledWith(expect.objectContaining({
+      failover: expect.objectContaining({
+        codex: { enabled: true, profileIds: [first] },
+      }),
+    }))
+  })
+
+  it('删除方案时从所有客户端候选库移除其 ID', async () => {
+    const profileId = '00000000-0000-4000-8000-000000000101'
+    const stored = defaultSettings()
+    for (const target of Object.keys(stored.failover)) {
+      stored.failover[target] = { enabled: true, profileIds: [profileId] }
+    }
+    const store = memoryStore(stored)
+    const app = { setLoginItemSettings: vi.fn() }
+    const service = new SettingsService({ store, app })
+    await service.initialize()
+
+    const result = await service.removeProfileId(profileId)
+
+    expect(Object.values(result.failover).every((value) => value.profileIds.length === 0)).toBe(true)
+    expect(store.write).toHaveBeenLastCalledWith(expect.objectContaining({
+      failover: expect.objectContaining({
+        codex: { enabled: true, profileIds: [] },
+      }),
+    }))
+  })
+
+  it('设置文件写入失败时也立即从当前内存候选库移除方案 ID', async () => {
+    const profileId = '00000000-0000-4000-8000-000000000101'
+    const stored = defaultSettings()
+    stored.failover.codex = { enabled: true, profileIds: [profileId] }
+    const store = memoryStore(stored)
+    const service = new SettingsService({
+      store,
+      app: { setLoginItemSettings: vi.fn() },
+    })
+    await service.initialize()
+    store.write.mockRejectedValueOnce(new Error('settings locked'))
+
+    await expect(service.removeProfileId(profileId)).rejects.toThrow('settings locked')
+    expect(service.getPublicSettings().failover.codex).toEqual({
+      enabled: true,
+      profileIds: [],
+    })
   })
 
   it('保存界面语言', async () => {

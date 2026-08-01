@@ -12,6 +12,7 @@ import type { Messages } from "../i18n";
 import { formatDuration, formatTokenCount } from "../lib/format";
 import { cacheRateTier } from "../lib/health";
 import { RollingNumber } from "./RollingNumber";
+import { ModelName } from "./ModelName";
 import type { ActiveRequest, ClientTarget } from "../types";
 import type { RequestFilter } from "../ui-types";
 
@@ -133,6 +134,7 @@ const RequestRow = memo(function RequestRow({
   const contentTiming = request.streaming === true;
   const firstLatency = contentTiming ? request.firstTokenLatencyMs : request.firstByteLatencyMs;
   const firstLabel = contentTiming ? "TTFT" : "TTFB";
+  const firstHint = contentTiming ? m.stream.firstTokenHint : m.stream.firstByteHint;
   const reasoning = request.reasoningEffort
     ? REASONING_LABEL[request.reasoningEffort.toLocaleLowerCase()] ?? request.reasoningEffort
     : "DEFAULT";
@@ -171,7 +173,7 @@ const RequestRow = memo(function RequestRow({
         </code>
       </span>
       <span className="request-model">
-        <code data-hint={request.model}>{request.model || "———"}</code>
+        <code data-hint={request.model}><ModelName value={request.model} /></code>
         <small>{subline}</small>
       </span>
       <span className="request-tokens">
@@ -199,7 +201,14 @@ const RequestRow = memo(function RequestRow({
       </span>
       <span className="request-timing">
         <RollingNumber ticker value={formatDuration(elapsed)} />
-        <small className={latencyTier(firstLatency)}>{firstLabel} {formatDuration(firstLatency)}</small>
+        <small
+          className={latencyTier(firstLatency)}
+          data-hint={firstHint}
+          title={firstHint}
+          aria-label={`${contentTiming ? m.stream.firstToken : firstLabel} ${formatDuration(firstLatency)}`}
+        >
+          {firstLabel} {formatDuration(firstLatency)}
+        </small>
       </span>
       <strong className={`request-state-label ${state.tint}`}>{state.label}</strong>
     </article>

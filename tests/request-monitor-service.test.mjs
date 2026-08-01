@@ -302,7 +302,7 @@ describe("活动请求监视", () => {
     expect(monitor.list()[0].firstTokenLatencyMs).toBe(25);
   });
 
-  it("同一响应 chunk 的首包和首字共用到达时间，不计入解析开销", () => {
+  it("同一响应 chunk 的首包和首 token 共用到达时间，不计入解析开销", () => {
     const times = [1_000, 1_040];
     let nowCalls = 0;
     const monitor = new RequestMonitorService({
@@ -817,17 +817,17 @@ describe("中止归类", () => {
     expect(event.removedRequestIds).toEqual([stale]);
   });
 
-  it("首字前的大量事件不会拖慢转发（增量解析，不重扫缓冲区）", () => {
+  it("首 token 前的大量事件不会拖慢转发（增量解析，不重扫缓冲区）", () => {
     const monitor = new RequestMonitorService({ now: () => 60_000 });
     const id = monitor.start({ profileName: "长前导", protocol: "openai-responses", streaming: true });
     monitor.responseStarted(id, { statusCode: 200, streaming: true });
 
     /*
-     * 首字之前塞 4000 个非有效事件——推理模型开流后常先刷一串状态事件。
+     * 首 token 之前塞 4000 个非有效事件——推理模型开流后常先刷一串状态事件。
      *
      * 老写法每来一片就把整个累积缓冲区重新 split + JSON.parse 一遍（还切两遍、
      * 每行 parse 两次），这段代码又同步卡在网关的转发路径上：实测 800 个事件就给
-     * 首字硬加了 1.4 秒。这里 4000 个，老写法要跑几十秒；增量解析是几毫秒。
+     * 首 token 硬加了 1.4 秒。这里 4000 个，老写法要跑几十秒；增量解析是几毫秒。
      * 上限拍在 2 秒——离新写法有几百倍余量，又稳稳卡死 O(n²) 的回归。
      */
     const started = performance.now();
@@ -885,7 +885,7 @@ describe("中止归类", () => {
 
     monitor.observeChunk(
       id,
-      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"不应记为首字"}\n',
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"不应记为首 token"}\n',
     );
     monitor.observeChunk(id, `data: ${"x".repeat(MAX_LINE_BYTES + 1)}\n\n`);
     expect(monitor.list()[0].firstTokenLatencyMs).toBeUndefined();
@@ -910,7 +910,7 @@ describe("中止归类", () => {
     expect(tail).toContain("z");
   });
 
-  it("SSE data 聚合按 UTF-8 字节限额，超限 frame 不误认前半段首字", () => {
+  it("SSE data 聚合按 UTF-8 字节限额，超限 frame 不误认前半段首 token", () => {
     let now = 90_000;
     const monitor = new RequestMonitorService({ now: () => now });
     const id = monitor.start({
@@ -923,7 +923,7 @@ describe("中止归类", () => {
     const paddingB = "é".repeat(280_000);
     monitor.observeChunk(
       id,
-      `data: [{"type":"response.output_text.delta","delta":"不应记为首字"},{"padding":"${paddingA}"},\n`,
+      `data: [{"type":"response.output_text.delta","delta":"不应记为首 token"},{"padding":"${paddingA}"},\n`,
     );
     monitor.observeChunk(id, `data: {"padding":"${paddingB}"}]\n\n`);
     expect(monitor.list()[0].firstTokenLatencyMs).toBeUndefined();

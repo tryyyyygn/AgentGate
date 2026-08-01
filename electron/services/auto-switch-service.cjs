@@ -5,7 +5,19 @@ const HEALTH_HISTORY_WINDOW_MS = 60 * 60_000
 const MINIMUM_COMPETING_SAMPLES = 3
 const ERROR_MESSAGE_LIMIT = 240
 const FAILOVER_FAILURE_THRESHOLD = 3
+const FAILOVER_COOLDOWN_MS = 60_000
+const FAILOVER_DECISION_HISTORY_LIMIT = 20
 const FAILOVER_TARGETS = new Set(['claude', 'codex', 'opencode', 'gemini'])
+const PROFILE_TARGETS = {
+  anthropic: new Set(['claude', 'opencode']),
+  'openai-responses': new Set(['codex', 'opencode']),
+  'openai-chat': new Set(['codex', 'opencode']),
+  gemini: new Set(['gemini', 'opencode']),
+}
+
+function profileCompatibleWithTarget(profile, target) {
+  return PROFILE_TARGETS[profile.protocol]?.has(target) === true
+}
 
 function checkedAtTimestamp(profile) {
   return Math.max(0, ...profile.endpoints.flatMap((endpoint) => {
@@ -156,7 +168,90 @@ class AutoSwitchService {
     this.failures = new Map()
     this.failoverInFlight = new Map()
     this.failoverControllers = new Map()
+    this.profileDecisions = new Map()
+    this.failoverDecisions = new Map()
+    this.failoverCooldowns = new Map()
     this.acceptingFailover = true
+  }
+
+  setProfileDecision(profileId, decision) {
+    const previous = this.profileDecisions.get(profileId) || {}
+    this.profileDecisions.set(profileId, {
+      ...previous,
+      ...decision,
+      checkedAt: decision.checkedAt || new Date(this.now()).toISOString(),
+    })
+  }
+
+  setFailoverDecision(target, decision) {
+    const previous = this.failoverDecisions.get(target) || {}
+    const hasReason = Object.prototype.hasOwnProperty.call(decision, 'reason')
+    const hasMessage = Object.prototype.hasOwnProperty.call(decision, 'message')
+    const history = [
+      ...(previous.history || []),
+      ...(decision.reason ? [{
+        at: decision.at || new Date(this.now()).toISOString(),
+        reason: decision.reason,
+        profileId: decision.profileId,
+        previousProfileId: decision.previousProfileId,
+      }] : []),
+    ].slice(-FAILOVER_DECISION_HISTORY_LIMIT)
+    this.failoverDecisions.set(target, {
+      ...previous,
+      ...decision,
+      at: decision.at || new Date(this.now()).toISOString(),
+      history,
+      excluded: Array.isArray(decision.excluded)
+        ? decision.excluded.slice(0, FAILOVER_DECISION_HISTORY_LIMIT)
+        : hasReason ? [] : (previous.excluded || []),
+      message: hasMessage ? decision.message : hasReason ? undefined : previous.message,
+    })
+  }
+
+  notifyDecision() {
+    // 生命周期未启动或已经进入停止屏障时，不再向渲染进程发送异步状态。
+    if (!this.timer || !this.acceptingFailover) return
+    this.onChange({ type: 'auto-switch-decision', autoSwitch: this.getPublicState() })
+  }
+
+  getPublicState() {
+    const settings = this.settingsService?.getPublicSettings?.()
+    const gateway = this.gatewayService?.getPublicState?.()
+    const failover = Object.fromEntries([...FAILOVER_TARGETS].map((target) => {
+      const decision = this.failoverDecisions.get(target) || {}
+      const cooldownUntil = this.failoverCooldowns.get(target)
+      const configuredEnabled = settings?.failover?.[target]?.enabled
+      const gatewayManaged = gateway
+        ? gateway.status === 'running' && gateway.engaged?.includes(target)
+        : undefined
+      const reason = configuredEnabled === false
+        ? 'disabled'
+        : configuredEnabled === true && gatewayManaged === false
+          ? 'not-engaged'
+          : decision.reason || 'idle'
+      return [target, {
+        enabled: typeof configuredEnabled === 'boolean'
+          ? configuredEnabled
+          : decision.enabled === true,
+        failureCount: this.failures.get(target)?.count || decision.failureCount || 0,
+        failureThreshold: FAILOVER_FAILURE_THRESHOLD,
+        reason,
+        at: decision.at,
+        profileId: decision.profileId,
+        previousProfileId: decision.previousProfileId,
+        profileName: decision.profileName,
+        availability: decision.availability,
+        medianLatencyMs: decision.medianLatencyMs,
+        message: decision.message,
+        excluded: decision.excluded || [],
+        cooldownUntil: cooldownUntil && cooldownUntil > this.now() ? new Date(cooldownUntil).toISOString() : undefined,
+        history: decision.history || [],
+      }]
+    }))
+    return {
+      profiles: Object.fromEntries(this.profileDecisions.entries()),
+      failover,
+    }
   }
 
   /**
@@ -190,6 +285,9 @@ class AutoSwitchService {
     this.lastRuns.clear()
     this.candidates.clear()
     this.failures.clear()
+    this.profileDecisions.clear()
+    this.failoverDecisions.clear()
+    this.failoverCooldowns.clear()
   }
 
   /**
@@ -214,6 +312,16 @@ class AutoSwitchService {
 
   resetFailoverFailures() {
     this.failures.clear()
+    this.failoverCooldowns.clear()
+    for (const [target, decision] of this.failoverDecisions.entries()) {
+      this.failoverDecisions.set(target, {
+        ...decision,
+        failureCount: 0,
+        reason: 'idle',
+        message: undefined,
+        excluded: [],
+      })
+    }
   }
 
   /**
@@ -263,10 +371,9 @@ class AutoSwitchService {
     try {
       const profiles = await this.profileService.list()
       this.assertGeneration(generation, controller.signal)
-      const enabledProfiles = profiles.filter((profile) => profile.autoSwitch.enabled)
-      const enabledIds = new Set(enabledProfiles.map((profile) => profile.id))
+      const profileIds = new Set(profiles.map((profile) => profile.id))
       for (const id of this.candidates.keys()) {
-        if (!enabledIds.has(id)) this.candidates.delete(id)
+        if (!profileIds.has(id)) this.candidates.delete(id)
       }
 
       for (const profile of profiles) {
@@ -276,10 +383,12 @@ class AutoSwitchService {
           const event = await this.runProfile(profile.id, {
             generation,
             signal: controller.signal,
-            allowSwitch: profile.autoSwitch.enabled,
+            // 探测始终按方案周期执行；此开关只控制是否允许自动切换活动 URL。
+            allowSwitch: profile.autoSwitch?.enabled === true,
           })
           this.assertGeneration(generation, controller.signal)
           this.onChange(event)
+          this.notifyDecision()
         } catch (error) {
           if (error.name === 'AbortError' || generation !== this.generation) break
           this.onChange({
@@ -287,6 +396,12 @@ class AutoSwitchService {
             profileId: profile.id,
             message: errorMessage(error),
           })
+          this.setProfileDecision(profile.id, {
+            reason: 'probe-failed',
+            switched: false,
+            message: errorMessage(error),
+          })
+          this.notifyDecision()
         }
       }
     } finally {
@@ -317,6 +432,7 @@ class AutoSwitchService {
     const tested = decision.profile
     if (context.allowSwitch === false) {
       this.candidates.delete(profileId)
+      this.setProfileDecision(profileId, { reason: 'monitoring-only', switched: false })
       return {
         type: 'profile-tested',
         profileId,
@@ -336,6 +452,10 @@ class AutoSwitchService {
 
     if (!best || best.url === tested.baseUrl) {
       this.candidates.delete(profileId)
+      this.setProfileDecision(profileId, {
+        reason: best ? 'already-best' : 'no-reachable-endpoint',
+        switched: false,
+      })
       return {
         type: 'profile-tested',
         profileId,
@@ -351,6 +471,7 @@ class AutoSwitchService {
         : Number.POSITIVE_INFINITY
       if (!currentFailed && improvement < MINIMUM_IMPROVEMENT_MS) {
         this.candidates.delete(profileId)
+        this.setProfileDecision(profileId, { reason: 'latency-threshold', switched: false })
         return { type: 'profile-tested', profileId, switched: false, reason: 'latency-threshold' }
       }
 
@@ -358,6 +479,10 @@ class AutoSwitchService {
       const winCount = previousCandidate?.url === best.url ? previousCandidate.count + 1 : 1
       this.candidates.set(profileId, { url: best.url, count: winCount })
       if (!currentFailed && winCount < REQUIRED_CONSECUTIVE_WINS) {
+        this.setProfileDecision(profileId, {
+          reason: 'warming-candidate',
+          switched: false,
+        })
         return {
           type: 'profile-tested',
           profileId,
@@ -408,6 +533,12 @@ class AutoSwitchService {
     })
 
     this.candidates.delete(profileId)
+    this.setProfileDecision(profileId, {
+      reason: switchReason,
+      switched: true,
+      availability: rollingHealth && best.metrics ? best.metrics.availability : undefined,
+      medianLatencyMs: rollingHealth && best.metrics ? best.metrics.medianLatencyMs : undefined,
+    })
     return {
       type: 'profile-tested',
       profileId,
@@ -430,6 +561,8 @@ class AutoSwitchService {
     if (entry.outcome === 'completed') {
       if (this.failures.get(target)?.profileId === entry.profileId) {
         this.failures.delete(target)
+        this.setFailoverDecision(target, { reason: 'healthy', failureCount: 0 })
+        this.notifyDecision()
       }
       return
     }
@@ -443,6 +576,12 @@ class AutoSwitchService {
       || gateway?.status !== 'running'
       || !gateway.engaged?.includes(target)) {
       this.failures.delete(target)
+      this.setFailoverDecision(target, {
+        enabled: targetSettings?.enabled === true,
+        reason: !targetSettings?.enabled ? 'disabled' : 'not-engaged',
+        failureCount: 0,
+      })
+      this.notifyDecision()
       return
     }
     if (!targetSettings.profileIds.includes(entry.profileId)
@@ -450,13 +589,35 @@ class AutoSwitchService {
       if (this.failures.get(target)?.profileId === entry.profileId) {
         this.failures.delete(target)
       }
+      this.setFailoverDecision(target, { reason: 'current-not-allowed', failureCount: 0 })
+      this.notifyDecision()
+      return
+    }
+
+    const cooldownUntil = this.failoverCooldowns.get(target)
+    if (cooldownUntil && cooldownUntil > this.now()) {
+      this.setFailoverDecision(target, {
+        enabled: true,
+        reason: 'cooldown',
+        failureCount: 0,
+      })
+      this.notifyDecision()
       return
     }
 
     const previous = this.failures.get(target)
     const count = previous?.profileId === entry.profileId ? previous.count + 1 : 1
     this.failures.set(target, { profileId: entry.profileId, count })
-    if (count < FAILOVER_FAILURE_THRESHOLD) return
+    this.setFailoverDecision(target, {
+      enabled: true,
+      reason: count < FAILOVER_FAILURE_THRESHOLD ? 'failure-counting' : 'probing-candidates',
+      failureCount: count,
+      previousProfileId: entry.profileId,
+    })
+    if (count < FAILOVER_FAILURE_THRESHOLD) {
+      this.notifyDecision()
+      return
+    }
     this.failures.delete(target)
 
     if (this.failoverInFlight.has(target)) return this.failoverInFlight.get(target)
@@ -468,6 +629,8 @@ class AutoSwitchService {
     })
       .catch((error) => {
         if (error.name === 'AbortError' || generation !== this.generation) return
+        this.setFailoverDecision(target, { message: errorMessage(error) })
+        this.notifyDecision()
         this.onChange({
           type: 'failure-switch',
           target,
@@ -491,28 +654,46 @@ class AutoSwitchService {
     this.assertGeneration(context.generation, context.signal)
     const settings = this.settingsService.getPublicSettings()
     const targetSettings = settings.failover[target]
-    if (!targetSettings.enabled || !targetSettings.profileIds.includes(previousProfileId)) return
+    if (!targetSettings.enabled || !targetSettings.profileIds.includes(previousProfileId)) {
+      this.setFailoverDecision(target, { reason: 'disabled', failureCount: 0 })
+      return
+    }
 
     const allowed = new Set(targetSettings.profileIds)
     const profiles = await this.profileService.list()
     this.assertGeneration(context.generation, context.signal)
-    const candidates = profiles.filter((profile) => (
-      profile.id !== previousProfileId
-      && allowed.has(profile.id)
-      && profile.targets.includes(target)
-    ))
+    const excluded = []
+    const candidates = profiles.filter((profile) => {
+      if (profile.id === previousProfileId) {
+        excluded.push({ profileId: profile.id, reason: 'current' })
+        return false
+      }
+      if (!allowed.has(profile.id)) {
+        excluded.push({ profileId: profile.id, reason: 'not-allowed' })
+        return false
+      }
+      if (!profile.targets.includes(target) || !profileCompatibleWithTarget(profile, target)) {
+        excluded.push({ profileId: profile.id, reason: 'incompatible' })
+        return false
+      }
+      return true
+    })
     const probed = (await Promise.all(candidates.map(async (profile) => {
       try {
         const probe = await this.healthService.probeProfile(profile.id, undefined, {
           signal: context.signal,
         })
-        if (!probe.ok) return undefined
+        if (!probe.ok) {
+          excluded.push({ profileId: profile.id, reason: 'probe-failed' })
+          return undefined
+        }
         return {
           profile,
           probe,
           metrics: profileFailoverMetrics(profile, this.now(), probe),
         }
       } catch {
+        excluded.push({ profileId: profile.id, reason: 'probe-failed' })
         return undefined
       }
     }))).filter(Boolean)
@@ -524,7 +705,15 @@ class AutoSwitchService {
       || left.profile.name.localeCompare(right.profile.name)
     ))
     const selected = probed[0]
-    if (!selected) throw new Error('No allowed failover profile passed the live probe')
+    if (!selected) {
+      this.setFailoverDecision(target, {
+        reason: 'no-candidate',
+        failureCount: FAILOVER_FAILURE_THRESHOLD,
+        previousProfileId,
+        excluded,
+      })
+      throw new Error('No allowed failover profile passed the live probe')
+    }
 
     const switched = await this.applyService.withLifecycleLock(async ({ apply }) => {
       this.assertGeneration(context.generation, context.signal)
@@ -552,7 +741,29 @@ class AutoSwitchService {
       return true
     })
 
-    if (!switched) return
+    if (!switched) {
+      this.setFailoverDecision(target, {
+        enabled: true,
+        reason: 'route-changed',
+        failureCount: 0,
+        excluded,
+      })
+      return
+    }
+    const cooldownUntil = this.now() + FAILOVER_COOLDOWN_MS
+    this.failoverCooldowns.set(target, cooldownUntil)
+    this.setFailoverDecision(target, {
+      enabled: true,
+      reason: 'switched',
+      failureCount: 0,
+      previousProfileId,
+      profileId: selected.profile.id,
+      profileName: selected.profile.name,
+      availability: selected.metrics.availability,
+      medianLatencyMs: selected.metrics.medianLatencyMs,
+      excluded,
+    })
+    this.notifyDecision()
     this.onChange({
       type: 'failure-switch',
       target,
@@ -571,6 +782,7 @@ module.exports = {
   MINIMUM_COMPETING_SAMPLES,
   MINIMUM_IMPROVEMENT_MS,
   FAILOVER_FAILURE_THRESHOLD,
+  FAILOVER_COOLDOWN_MS,
   REQUIRED_CONSECUTIVE_WINS,
   SCHEDULER_TICK_MS,
   AutoSwitchService,

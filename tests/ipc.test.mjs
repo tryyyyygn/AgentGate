@@ -95,6 +95,24 @@ function createHarness({ gatewayRoutes = [], gatewayStatus, ...overrides } = {})
       stopGateway,
       restoreCodexOfficial: vi.fn().mockResolvedValue(undefined),
     },
+    settingsService: {
+      getPublicSettings: vi.fn().mockReturnValue({
+        version: 1,
+        launchAtLogin: false,
+        closeToTray: true,
+        startGatewayOnLaunch: true,
+        theme: "system",
+        language: "system",
+        failover: {
+          claude: { enabled: false, profileIds: [] },
+          codex: { enabled: false, profileIds: [] },
+          opencode: { enabled: false, profileIds: [] },
+          gemini: { enabled: false, profileIds: [] },
+        },
+      }),
+      removeProfileId: vi.fn().mockResolvedValue(undefined),
+      update: vi.fn().mockResolvedValue(undefined),
+    },
     gatewayService: {
       // 形状必须跟真的 GatewayService.getPublicState() 一致——上面那条测试会拿真货来比对。
       getPublicState: vi.fn().mockImplementation(() => ({
@@ -208,6 +226,30 @@ describe("IPC bootstrap", () => {
     const { handlers } = createHarness({ startupError });
 
     await expect(handlers.get(CHANNELS.bootstrap)()).resolves.toMatchObject({ startupError });
+  });
+
+  it("bootstrap 透传不含敏感字段的历史状态、来源和连接模式", async () => {
+    const history = [{
+      id: "history-1",
+      profileId: "00000000-0000-4000-8000-000000000901",
+      profileName: "历史夹具",
+      targets: ["codex"],
+      createdAt: "2026-07-31T08:00:00.000Z",
+      status: "superseded",
+      success: true,
+      canUndo: false,
+      source: "auto",
+      connectionMode: "gateway",
+      message: "A newer write replaced this configuration state",
+    }];
+    const { handlers } = createHarness({
+      applyService: {
+        listHistory: vi.fn().mockResolvedValue(history),
+        listVerifiedTargets: vi.fn().mockResolvedValue([]),
+      },
+    });
+
+    await expect(handlers.get(CHANNELS.bootstrap)()).resolves.toMatchObject({ history });
   });
 });
 
@@ -602,6 +644,18 @@ describe("IPC gateway coordination", () => {
       .resolves.toEqual({ ok: true });
     expect(dependencies.applyService.stopGateway).toHaveBeenCalledWith({ targets: ["codex"] });
     expect(dependencies.gatewayService.unassignRoutes).toHaveBeenCalledWith(["codex"]);
+    expect(dependencies.profileService.delete).toHaveBeenCalledWith(profile.id);
+    expect(dependencies.settingsService.removeProfileId).toHaveBeenCalledWith(profile.id);
+    expect(dependencies.gatewayService.restoreRoutes).not.toHaveBeenCalled();
+  });
+
+  it("设置清理失败时仍完成方案删除，不恢复指向已删除方案的路由", async () => {
+    const route = { target: "codex", profileId: "00000000-0000-0000-0000-000000000901" };
+    const { handlers, profile, dependencies } = createHarness({ gatewayRoutes: [route] });
+    dependencies.settingsService.removeProfileId.mockRejectedValueOnce(new Error("settings locked"));
+
+    await expect(handlers.get(CHANNELS.deleteProfile)(null, profile.id))
+      .resolves.toEqual({ ok: true });
     expect(dependencies.profileService.delete).toHaveBeenCalledWith(profile.id);
     expect(dependencies.gatewayService.restoreRoutes).not.toHaveBeenCalled();
   });

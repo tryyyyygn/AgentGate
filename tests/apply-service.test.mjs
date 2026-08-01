@@ -1040,8 +1040,19 @@ command = "node"
     await applyService.supersedeOlderHistory(latest.id, [filePath]);
 
     const history = await applyService.listHistory();
-    expect(history[0]).toMatchObject({ id: latest.id, canUndo: true, source: "auto" });
-    expect(history[1]).toMatchObject({ id: older.id, canUndo: false, success: true });
+    expect(history[0]).toMatchObject({
+      id: latest.id,
+      canUndo: true,
+      source: "auto",
+      connectionMode: "direct",
+      status: "applied",
+    });
+    expect(history[1]).toMatchObject({
+      id: older.id,
+      canUndo: false,
+      success: true,
+      status: "superseded",
+    });
   });
 
   it("仅允许当前连接 revision 的成功历史授权自动写入", async () => {

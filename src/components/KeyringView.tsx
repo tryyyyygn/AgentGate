@@ -38,6 +38,7 @@ import type {
 } from "../types";
 import type { BusyAction } from "../ui-types";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ModelName } from "./ModelName";
 
 const BAR_FILL = {
   healthy: "var(--good)",
@@ -921,7 +922,7 @@ export function KeyringView({
                           {profile.availableModels.length > 0 && (
                             <div className="model-chips">
                               {profile.availableModels.map((model) => (
-                                <code key={model}>{model}</code>
+                                <code key={model}><ModelName value={model} /></code>
                               ))}
                             </div>
                           )}

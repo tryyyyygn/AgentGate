@@ -376,10 +376,11 @@ function toPublicHistory(entry) {
     profileName: entry.profileName,
     targets: entry.targets,
     createdAt: entry.createdAt,
+    status: entry.status,
     source: entry.source || 'manual',
     success,
     canUndo: entry.status === 'applied' && entry.connectionMode !== 'gateway',
-    ...(entry.connectionMode === 'gateway' ? { connectionMode: 'gateway' } : {}),
+    connectionMode: entry.connectionMode || 'direct',
     ...(message ? { message } : {}),
   }
 }

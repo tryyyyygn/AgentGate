@@ -252,8 +252,11 @@ let mockHistory: HistoryEntry[] = [
     profileName: "主力中转",
     targets: ["claude", "opencode"],
     createdAt: minutesAgo(18),
+    status: "applied",
     success: true,
     canUndo: true,
+    source: "manual",
+    connectionMode: "direct",
   },
 ];
 
@@ -717,7 +720,7 @@ const mockBridge: AgentGateBridge = {
 
   async undoHistory(id: string) {
     mockHistory = mockHistory.map((entry) =>
-      entry.id === id ? { ...entry, canUndo: false } : entry,
+      entry.id === id ? { ...entry, canUndo: false, status: "undone" } : entry,
     );
     return clone({
       profiles: mockProfiles,

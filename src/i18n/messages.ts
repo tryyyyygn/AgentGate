@@ -60,6 +60,29 @@ export interface Messages {
     failoverNoProfiles: string;
     enableFailover: string;
     disableFailover: string;
+    decisionFailureCount: string;
+    decisionExcluded: string;
+    decisionIdle: string;
+    decisionMonitoringOnly: string;
+    decisionDisabled: string;
+    decisionNotEngaged: string;
+    decisionCurrentNotAllowed: string;
+    decisionFailureCounting: string;
+    decisionProbingCandidates: string;
+    decisionNoCandidate: string;
+    decisionProbeFailed: string;
+    decisionSwitched: string;
+    decisionCooling: string;
+    decisionCooldown: string;
+    decisionHealthy: string;
+    decisionRouteChanged: string;
+    decisionAlreadyBest: string;
+    decisionNoReachableEndpoint: string;
+    decisionWarmingCandidate: string;
+    decisionLatencyThreshold: string;
+    decisionCurrentFailed: string;
+    decisionBetterHealthScore: string;
+    decisionLegacyLatencyWin: string;
   };
   gateway: {
     online: string;
@@ -232,6 +255,9 @@ export interface Messages {
     tipCache: string;
     tipWrite: string;
     tipReason: string;
+    firstToken: string;
+    firstTokenHint: string;
+    firstByteHint: string;
     empty: string;
     noMatch: string;
     resolving: string;
@@ -310,6 +336,24 @@ export interface Messages {
     system: string;
     language: string;
     security: string;
+    history: string;
+    historyEmpty: string;
+    historySource: string;
+    historyManual: string;
+    historyAuto: string;
+    historyDirect: string;
+    historyUndo: string;
+    historyApplied: string;
+    historyUndone: string;
+    historySuperseded: string;
+    historyRolledBack: string;
+    historyFailed: string;
+    historyGateway: string;
+    restoreOfficialTitle: string;
+    restoreOfficialMessage: string;
+    restoreOfficialConfirm: string;
+    restoreOfficialMode: string;
+    gatewayMode: string;
   };
   editor: {
     createTitle: string;
@@ -369,6 +413,7 @@ export interface Messages {
     gatewayStopped: string;
     codexGatewayConflict: string;
     codexOfficialRestored: string;
+    undone: string;
     portReassigned: string;
     gatewaySkipped: string;
     settingsSaved: string;
@@ -449,6 +494,29 @@ const zh: Messages = {
     failoverNoProfiles: "没有适用于此客户端的密钥",
     enableFailover: "启用 {client} 故障切换",
     disableFailover: "关闭 {client} 故障切换",
+    decisionFailureCount: "失败 {count}/{threshold}",
+    decisionExcluded: "{count} 个候选被排除",
+    decisionIdle: "等待故障事件",
+    decisionMonitoringOnly: "仅探测，不允许切换",
+    decisionDisabled: "客户端未启用自动择优",
+    decisionNotEngaged: "客户端当前未由网关接管",
+    decisionCurrentNotAllowed: "当前方案不在允许切换库",
+    decisionFailureCounting: "正在累计连续失败",
+    decisionProbingCandidates: "正在探测候选方案",
+    decisionNoCandidate: "没有通过探测的候选方案",
+    decisionProbeFailed: "探测失败",
+    decisionSwitched: "已完成故障切换",
+    decisionCooling: "正在冷却",
+    decisionCooldown: "冷却至 {time}",
+    decisionHealthy: "最近请求已恢复正常",
+    decisionRouteChanged: "路由已被其他操作改变",
+    decisionAlreadyBest: "当前端点已经是最佳",
+    decisionNoReachableEndpoint: "没有可达端点",
+    decisionWarmingCandidate: "候选端点仍在积累样本",
+    decisionLatencyThreshold: "延迟改善不足",
+    decisionCurrentFailed: "当前端点不可用",
+    decisionBetterHealthScore: "候选健康评分更高",
+    decisionLegacyLatencyWin: "候选延迟连续更低",
   },
   gateway: {
     online: "网关运行中",
@@ -620,6 +688,9 @@ const zh: Messages = {
     tipCache: "命中的提示 Token（便宜）",
     tipWrite: "写入的缓存（按 1.25× 计费，最贵）",
     tipReason: "推理 Token（已含在输出里）",
+    firstToken: "首 token",
+    firstTokenHint: "流式响应中首次收到有效推理、文本或工具事件；用于近似思考开始，不代表不可见的精确计费时刻。",
+    firstByteHint: "上游响应第一字节到达（TTFB）。非流式响应只显示这个指标。",
     empty: "还没有请求记录 · 网关收到请求后会在这里即时显示",
     noMatch: "没有符合筛选条件的请求",
     resolving: "正在解析上游",
@@ -695,6 +766,24 @@ const zh: Messages = {
     system: "跟随系统",
     language: "语言",
     security: "真实 Key 由 Windows DPAPI 加密，只在本机交给网关；客户端不会保存上游 Key。方案中的 URL 与 Key 永不写入客户端配置文件。",
+    history: "配置变更历史",
+    historyEmpty: "暂无配置变更记录",
+    historySource: "来源 · {source}",
+    historyManual: "手动",
+    historyAuto: "自动",
+    historyDirect: "直连",
+    historyUndo: "撤销",
+    historyApplied: "已应用",
+    historyUndone: "已撤销",
+    historySuperseded: "已被新配置替代",
+    historyRolledBack: "已回滚",
+    historyFailed: "失败",
+    historyGateway: "网关接管",
+    restoreOfficialTitle: "恢复 Codex 官方连接？",
+    restoreOfficialMessage: "只移除 Agent;Gate 管理的 provider 和顶层选择，不会删除 auth.json、用户自己的 provider 或 MCP 配置。",
+    restoreOfficialConfirm: "恢复官方",
+    restoreOfficialMode: "官方直连",
+    gatewayMode: "Agent;Gate 网关",
   },
   editor: {
     createTitle: "新建连接方案",
@@ -754,6 +843,7 @@ const zh: Messages = {
     gatewayStopped: "本地网关已停止",
     codexGatewayConflict: "Codex 仍指向另一个本地网关地址，无法安全自动覆盖。可恢复官方连接，登录状态不会清除",
     codexOfficialRestored: "Codex 已恢复官方登录，当前登录状态保持不变",
+    undone: "配置已撤销",
     portReassigned: "端口已换到 {port}",
     gatewaySkipped: "本地网关已停止；已跳过用户修改的 {targets}",
     settingsSaved: "设置已保存",
@@ -839,6 +929,29 @@ const zhTW: Messages = {
     failoverNoProfiles: "沒有適用於這個 Client 的 API Key",
     enableFailover: "啟用 {client} 故障切換",
     disableFailover: "關閉 {client} 故障切換",
+    decisionFailureCount: "失敗 {count}/{threshold}",
+    decisionExcluded: "{count} 個候選被排除",
+    decisionIdle: "等待故障事件",
+    decisionMonitoringOnly: "僅探測，不允許切換",
+    decisionDisabled: "Client 未啟用自動選最佳",
+    decisionNotEngaged: "Client 目前未由 Gateway 接管",
+    decisionCurrentNotAllowed: "目前 Profile 不在允許切換庫",
+    decisionFailureCounting: "正在累計連續失敗",
+    decisionProbingCandidates: "正在探測候選 Profile",
+    decisionNoCandidate: "沒有通過探測的候選 Profile",
+    decisionProbeFailed: "探測失敗",
+    decisionSwitched: "已完成故障切換",
+    decisionCooling: "正在冷卻",
+    decisionCooldown: "冷卻至 {time}",
+    decisionHealthy: "最近請求已恢復正常",
+    decisionRouteChanged: "路由已被其他操作改變",
+    decisionAlreadyBest: "目前端點已是最佳",
+    decisionNoReachableEndpoint: "沒有可達端點",
+    decisionWarmingCandidate: "候選端點仍在累積樣本",
+    decisionLatencyThreshold: "延遲改善不足",
+    decisionCurrentFailed: "目前端點不可用",
+    decisionBetterHealthScore: "候選健康評分較高",
+    decisionLegacyLatencyWin: "候選延遲連續較低",
   },
   gateway: {
     online: "Gateway 運行中",
@@ -1010,6 +1123,9 @@ const zhTW: Messages = {
     tipCache: "命中的提示 Token（便宜）",
     tipWrite: "寫入的快取（1.25× 計費，最貴）",
     tipReason: "推理 Token（已算在輸出裡）",
+    firstToken: "首 token",
+    firstTokenHint: "串流回應首次收到有效推理、文字或工具事件；用來接近思考開始，不代表不可見的精確計費時刻。",
+    firstByteHint: "上游回應第一個位元組到達（TTFB）。非串流回應只顯示這個指標。",
     empty: "還沒有請求 · Gateway 收到請求後會即時顯示在這裡",
     noMatch: "沒有符合篩選條件的請求",
     resolving: "解析上游中",
@@ -1085,6 +1201,24 @@ const zhTW: Messages = {
     system: "跟隨系統",
     language: "語言",
     security: "真正的 Key 由 Windows DPAPI 加密，只在本機交給 Gateway；Client 不會存到上游的 Key。Profile 裡的 URL 和 Key 永遠不會寫進 Client 的設定檔。",
+    history: "設定變更紀錄",
+    historyEmpty: "目前沒有設定變更紀錄",
+    historySource: "來源 · {source}",
+    historyManual: "手動",
+    historyAuto: "自動",
+    historyDirect: "直連",
+    historyUndo: "復原",
+    historyApplied: "已套用",
+    historyUndone: "已復原",
+    historySuperseded: "已被新設定取代",
+    historyRolledBack: "已回滾",
+    historyFailed: "失敗",
+    historyGateway: "Gateway 接管",
+    restoreOfficialTitle: "恢復 Codex 官方連線？",
+    restoreOfficialMessage: "只移除 Agent;Gate 管理的 provider 和頂層選擇，不會刪除 auth.json、使用者自己的 provider 或 MCP 設定。",
+    restoreOfficialConfirm: "恢復官方",
+    restoreOfficialMode: "官方直連",
+    gatewayMode: "Agent;Gate Gateway",
   },
   editor: {
     createTitle: "新增 Profile",
@@ -1144,6 +1278,7 @@ const zhTW: Messages = {
     gatewayStopped: "本機 Gateway 已停止",
     codexGatewayConflict: "Codex 仍指向另一個本機 Gateway 位址，無法安全自動覆蓋。可恢復官方連線，登入狀態不會清除",
     codexOfficialRestored: "Codex 已恢復官方登入，目前登入狀態保持不變",
+    undone: "設定已復原",
     portReassigned: "Port 已換成 {port}",
     gatewaySkipped: "本機 Gateway 已停止；{targets} 被你改過，跳過不動",
     settingsSaved: "設定已儲存",
@@ -1229,6 +1364,29 @@ const ja: Messages = {
     failoverNoProfiles: "このクライアントで使えるキーがありません",
     enableFailover: "{client} の障害時切替を有効化",
     disableFailover: "{client} の障害時切替を無効化",
+    decisionFailureCount: "失敗 {count}/{threshold}",
+    decisionExcluded: "{count} 件の候補を除外",
+    decisionIdle: "障害イベント待ち",
+    decisionMonitoringOnly: "チェックのみ、切替なし",
+    decisionDisabled: "クライアントの自動切替は無効",
+    decisionNotEngaged: "クライアントはゲートウェイ未接続",
+    decisionCurrentNotAllowed: "現在のProfileは許可リスト外",
+    decisionFailureCounting: "連続失敗をカウント中",
+    decisionProbingCandidates: "候補Profileをチェック中",
+    decisionNoCandidate: "チェックを通過した候補なし",
+    decisionProbeFailed: "チェック失敗",
+    decisionSwitched: "障害時切替を完了",
+    decisionCooling: "クールダウン中",
+    decisionCooldown: "{time} までクールダウン",
+    decisionHealthy: "直近のリクエストは正常",
+    decisionRouteChanged: "別の操作でルートが変更済み",
+    decisionAlreadyBest: "現在のエンドポイントが最適",
+    decisionNoReachableEndpoint: "到達可能なエンドポイントなし",
+    decisionWarmingCandidate: "候補のサンプル蓄積中",
+    decisionLatencyThreshold: "遅延改善が不足",
+    decisionCurrentFailed: "現在のエンドポイントが利用不可",
+    decisionBetterHealthScore: "候補のヘルススコアが高い",
+    decisionLegacyLatencyWin: "候補の遅延が連続して低い",
   },
   gateway: {
     online: "ゲートウェイ稼働中",
@@ -1400,6 +1558,9 @@ const ja: Messages = {
     tipCache: "ヒットした入力トークン（安い）",
     tipWrite: "キャッシュ書き込み（1.25 倍課金、最も高い）",
     tipReason: "推論トークン（出力に含まれる）",
+    firstToken: "初回 token",
+    firstTokenHint: "ストリーミング応答で最初の有効な推論・テキスト・ツールイベントを受信した時刻。思考開始の近似であり、不可視の正確な課金時刻ではありません。",
+    firstByteHint: "上流応答の最初のバイトが到着した時刻（TTFB）。非ストリーミング応答ではこの値だけを表示します。",
     empty: "リクエストはまだありません · ゲートウェイが受けた時点でここに出ます",
     noMatch: "条件に一致するリクエストがありません",
     resolving: "上流を解決中",
@@ -1475,6 +1636,24 @@ const ja: Messages = {
     system: "システムに従う",
     language: "言語",
     security: "本物のキーは Windows DPAPI で暗号化し、ローカルのゲートウェイにのみ渡します。クライアントが上流のキーを保存することはありません。プロファイルの URL とキーがクライアントの設定ファイルに書き込まれることもありません。",
+    history: "設定変更履歴",
+    historyEmpty: "設定変更履歴はありません",
+    historySource: "ソース · {source}",
+    historyManual: "手動",
+    historyAuto: "自動",
+    historyDirect: "直接接続",
+    historyUndo: "元に戻す",
+    historyApplied: "適用済み",
+    historyUndone: "元に戻しました",
+    historySuperseded: "新しい設定に置換済み",
+    historyRolledBack: "ロールバック済み",
+    historyFailed: "失敗",
+    historyGateway: "ゲートウェイ接続",
+    restoreOfficialTitle: "Codex を公式接続に戻しますか？",
+    restoreOfficialMessage: "Agent;Gate が管理する provider とトップレベル選択だけを外します。auth.json、ユーザーの provider、MCP 設定は削除しません。",
+    restoreOfficialConfirm: "公式に戻す",
+    restoreOfficialMode: "公式接続",
+    gatewayMode: "Agent;Gate ゲートウェイ",
   },
   editor: {
     createTitle: "プロファイルを追加",
@@ -1534,6 +1713,7 @@ const ja: Messages = {
     gatewayStopped: "ローカルゲートウェイを停止しました",
     codexGatewayConflict: "Codex は別のローカルゲートウェイを参照しているため、安全に上書きできません。公式接続に戻してもログイン状態は維持されます",
     codexOfficialRestored: "Codex を公式ログインに戻しました。ログイン状態は維持されています",
+    undone: "設定を元に戻しました",
     portReassigned: "ポートを {port} に変更しました",
     gatewaySkipped: "ローカルゲートウェイを停止しました。{targets} は手動で変更されているため触れていません",
     settingsSaved: "設定を保存しました",
@@ -1619,6 +1799,29 @@ const en: Messages = {
     failoverNoProfiles: "No keys support this client",
     enableFailover: "Enable failover for {client}",
     disableFailover: "Disable failover for {client}",
+    decisionFailureCount: "FAILURES {count}/{threshold}",
+    decisionExcluded: "{count} candidates excluded",
+    decisionIdle: "Waiting for a failure",
+    decisionMonitoringOnly: "Probe only; switching is disabled",
+    decisionDisabled: "Failover is disabled for this client",
+    decisionNotEngaged: "This client is not managed by the gateway",
+    decisionCurrentNotAllowed: "The current profile is not in the allowed pool",
+    decisionFailureCounting: "Counting consecutive failures",
+    decisionProbingCandidates: "Probing allowed candidates",
+    decisionNoCandidate: "No candidate passed the probe",
+    decisionProbeFailed: "Probe failed",
+    decisionSwitched: "Failover completed",
+    decisionCooling: "COOLDOWN ACTIVE",
+    decisionCooldown: "Cooldown until {time}",
+    decisionHealthy: "The latest request recovered",
+    decisionRouteChanged: "The route changed elsewhere",
+    decisionAlreadyBest: "The current endpoint is already best",
+    decisionNoReachableEndpoint: "No reachable endpoint",
+    decisionWarmingCandidate: "Candidate is still collecting samples",
+    decisionLatencyThreshold: "Latency improvement is too small",
+    decisionCurrentFailed: "The current endpoint failed",
+    decisionBetterHealthScore: "Candidate has a better health score",
+    decisionLegacyLatencyWin: "Candidate latency won repeatedly",
   },
   gateway: {
     online: "GATEWAY ONLINE",
@@ -1790,6 +1993,9 @@ const en: Messages = {
     tipCache: "Cached prompt tokens (cheap)",
     tipWrite: "Cache write (billed 1.25x, priciest)",
     tipReason: "Reasoning tokens (already inside output)",
+    firstToken: "FIRST TOKEN",
+    firstTokenHint: "First valid reasoning, text, or tool event in a streamed response; an approximation of thinking start, not the exact hidden billing timestamp.",
+    firstByteHint: "Time until the first upstream response byte (TTFB). Non-streaming responses show only this metric.",
     empty: "NO REQUESTS YET · gateway traffic appears here in real time",
     noMatch: "NO MATCHING REQUESTS",
     resolving: "RESOLVING",
@@ -1865,6 +2071,24 @@ const en: Messages = {
     system: "SYSTEM",
     language: "Language",
     security: "Real keys are encrypted with Windows DPAPI and handed only to the local gateway. Clients never store upstream keys, and profile URLs and keys are never written to client config files.",
+    history: "CONFIGURATION HISTORY",
+    historyEmpty: "No configuration changes yet",
+    historySource: "SOURCE · {source}",
+    historyManual: "MANUAL",
+    historyAuto: "AUTO",
+    historyDirect: "DIRECT",
+    historyUndo: "UNDO",
+    historyApplied: "APPLIED",
+    historyUndone: "UNDONE",
+    historySuperseded: "SUPERSEDED",
+    historyRolledBack: "ROLLED BACK",
+    historyFailed: "FAILED",
+    historyGateway: "GATEWAY",
+    restoreOfficialTitle: "Restore Codex official connection?",
+    restoreOfficialMessage: "This removes only the Agent;Gate-managed provider and top-level selection. auth.json, your own providers, and MCP settings are kept.",
+    restoreOfficialConfirm: "RESTORE OFFICIAL",
+    restoreOfficialMode: "OFFICIAL DIRECT",
+    gatewayMode: "AGENT;GATE GATEWAY",
   },
   editor: {
     createTitle: "New connection profile",
@@ -1924,6 +2148,7 @@ const en: Messages = {
     gatewayStopped: "Local gateway stopped",
     codexGatewayConflict: "Codex points to another local gateway, so it cannot be overwritten safely. Restore the official connection without clearing the current login",
     codexOfficialRestored: "Codex restored to official login; the current session was preserved",
+    undone: "Configuration undone",
     portReassigned: "Port moved to {port}",
     gatewaySkipped: "Gateway stopped; skipped user-edited {targets}",
     settingsSaved: "Settings saved",

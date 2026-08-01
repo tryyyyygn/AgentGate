@@ -33,6 +33,7 @@ import type {
   SaveProfileInput,
 } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ModelName } from "./ModelName";
 
 interface ProfileEditorProps {
   profile?: Profile;
@@ -635,7 +636,7 @@ export function ProfileEditor({
                             setModelMenuOpen(false);
                           }}
                         >
-                          <code>{model}</code>
+                          <code><ModelName value={model} /></code>
                           {model === form.model && <Check size={12} />}
                         </button>
                       )) : (

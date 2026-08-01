@@ -10,7 +10,9 @@ const {
   organizeProfileDrop,
 } = await import("../src/components/KeyringView");
 const { ActivityView } = await import("../src/components/ActivityView");
+const { ModelName } = await import("../src/components/ModelName");
 const { OverviewView } = await import("../src/components/OverviewView");
+const { ClientRouteSettings, failoverDraftChanged } = await import("../src/components/ClientRouteSettings");
 const { Toast } = await import("../src/components/Toast");
 const {
   cascadeSessionIds,
@@ -30,6 +32,7 @@ const {
 } = await import("../src/components/WalletView");
 const {
   FailoverDialog,
+  failoverSettingsChanged,
   StatusView,
   parseStoredProbeRecords,
   parseStoredProbeModels,
@@ -201,6 +204,15 @@ describe("frontend state boundaries", () => {
     expect(formatTokenCount(12_500_000_000)).toBe("12.5B");
   });
 
+  it("GPT-5.6 的 luna、terra、sol 只给后缀分配语义色类", () => {
+    const renderModel = (value) => renderToStaticMarkup(React.createElement(ModelName, { value }));
+
+    expect(renderModel("gpt-5.6-luna")).toContain("gpt-5.6-<span class=\"model-variant model-variant-luna\">luna</span>");
+    expect(renderModel("gpt-5.6-terra")).toContain("gpt-5.6-<span class=\"model-variant model-variant-terra\">terra</span>");
+    expect(renderModel("gpt-5.6-sol")).toContain("gpt-5.6-<span class=\"model-variant model-variant-sol\">sol</span>");
+    expect(renderModel("gpt-5.6")).not.toContain("model-variant");
+  });
+
   it("全选使用完整筛选结果的顶层行，不受渲染行数截断影响", () => {
     expect(topLevelSessionIds([
       { session: { id: "codex:root" }, depth: 0 },
@@ -305,6 +317,62 @@ describe("frontend state boundaries", () => {
     expect(html).toContain("disabled");
     expect(html).not.toContain("tool bridge");
     expect(html).not.toContain("Starts to tray");
+  });
+
+  it("配置历史区分手动/自动、直连/网关和可撤销状态", () => {
+    const html = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(SettingsView, {
+        settings: {
+          ...DEFAULT_SETTINGS,
+          language: "en",
+        },
+        busy: false,
+        version: "1.8.3",
+        history: [
+          {
+            id: "history-applied",
+            profileId: "relay-a",
+            profileName: "Primary relay",
+            targets: ["codex"],
+            createdAt: "2026-07-31T08:00:00.000Z",
+            status: "applied",
+            success: true,
+            canUndo: true,
+            source: "manual",
+            connectionMode: "direct",
+          },
+          {
+            id: "history-superseded",
+            profileId: "relay-b",
+            profileName: "Backup relay",
+            targets: ["claude"],
+            createdAt: "2026-07-31T08:01:00.000Z",
+            status: "superseded",
+            success: true,
+            canUndo: false,
+            source: "auto",
+            connectionMode: "gateway",
+          },
+        ],
+        onChange: vi.fn(),
+        onCheckUpdate: vi.fn(),
+        onDownloadUpdate: vi.fn(),
+        onInstallUpdate: vi.fn(),
+        onUndoHistory: vi.fn(),
+      }),
+    ));
+
+    expect(html).toContain("MANUAL");
+    expect(html).toContain("AUTO");
+    expect(html).toContain("DIRECT");
+    expect(html).toContain("GATEWAY");
+    expect(html).toContain("APPLIED");
+    expect(html).toContain("SUPERSEDED");
+    expect(html).toContain("tier-warn");
+    expect(html).toContain("Codex");
+    expect(html).toContain("Claude Code");
   });
 
   it("Keyring 把 99% 缓存命中率显示为绿色", () => {
@@ -492,6 +560,57 @@ describe("frontend state boundaries", () => {
     expect(dialogHtml.match(/class="switch-input"/g)).toHaveLength(4);
   });
 
+  it("故障切换弹窗展示自动择优的失败计数、冷却和候选排除摘要，而状态页不重复占位", () => {
+    const current = profile("00000000-0000-0000-0000-000000000051", "Current", "codex");
+    const incompatible = { ...profile("00000000-0000-0000-0000-000000000052", "Incompatible", "codex"), protocol: "anthropic" };
+    const autoSwitch = {
+      profiles: {},
+      failover: {
+        claude: { enabled: false, failureCount: 0, failureThreshold: 3, reason: "idle", excluded: [], history: [] },
+        codex: {
+          enabled: true,
+          failureCount: 2,
+          failureThreshold: 3,
+          reason: "failure-counting",
+          excluded: [{ profileId: current.id, reason: "current" }],
+          history: [],
+          cooldownUntil: "2026-07-31T00:00:00.000Z",
+        },
+        opencode: { enabled: false, failureCount: 0, failureThreshold: 3, reason: "idle", excluded: [], history: [] },
+        gemini: { enabled: false, failureCount: 0, failureThreshold: 3, reason: "idle", excluded: [], history: [] },
+      },
+    };
+    const statusHtml = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(StatusView, {
+        profiles: [current],
+        gateway: { routes: [{ target: "codex", profileId: current.id, profileName: current.name }] },
+        autoSwitch,
+      }),
+    ));
+    const dialogHtml = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(FailoverDialog, {
+        profiles: [current, incompatible],
+        gateway: { routes: [{ target: "codex", profileId: current.id, profileName: current.name }] },
+        settings: DEFAULT_SETTINGS,
+        autoSwitch,
+        busy: false,
+        onSave: vi.fn(),
+        onClose: vi.fn(),
+      }),
+    ));
+
+    expect(statusHtml).not.toContain("FAILOVER TRACE");
+    expect(statusHtml).not.toContain(MESSAGES.en.status.decision);
+    expect(dialogHtml).toContain("FAILURES 2/3");
+    expect(dialogHtml).toContain(MESSAGES.en.status.decisionFailureCounting);
+    expect(dialogHtml).toContain("1 candidates excluded");
+    expect(dialogHtml).not.toContain("Incompatible");
+  });
+
   it("钱包固定每 5 分钟刷新，并优先显示每日额度使用率最高的订阅", () => {
     expect(WALLET_AUTO_REFRESH_MS).toBe(300_000);
     expect(WALLET_CHECK_CONCURRENCY).toBe(3);
@@ -581,6 +700,7 @@ describe("frontend state boundaries", () => {
         onEngage: vi.fn(),
         onRelease: vi.fn(),
         onRestoreOfficial: vi.fn(),
+        onOpenClientSettings: vi.fn(),
         onGoActivity: vi.fn(),
       }),
     ));
@@ -589,6 +709,69 @@ describe("frontend state boundaries", () => {
     expect(html).not.toMatch(/CODEX[^<]*EXPERIMENTAL/);
     expect(html).toContain(MESSAGES.en.overview.restoreOfficial);
     expect(html.match(/SELECT KEY/g)).toHaveLength(3);
+  });
+
+  it("客户端设置入口只展示当前客户端兼容的候选库", () => {
+    const codex = profile("codex-route", "Codex Main", "codex");
+    const claude = {
+      ...profile("claude-route", "Claude Only", "claude"),
+      protocol: "anthropic",
+    };
+    const html = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(ClientRouteSettings, {
+        target: "codex",
+        profiles: [codex, claude],
+        groups: [],
+        clients: [],
+        gateway: {
+          status: "stopped",
+          host: "127.0.0.1",
+          port: 17863,
+          targets: ["codex"],
+          engaged: [],
+          routes: [{
+            target: "codex",
+            profileId: codex.id,
+            profileName: codex.name,
+            protocol: codex.protocol,
+            activatedAt: codex.updatedAt,
+          }],
+        },
+        settings: DEFAULT_SETTINGS,
+        busy: false,
+        onSave: vi.fn().mockResolvedValue(true),
+        onClose: vi.fn(),
+      }),
+    ));
+
+    expect(html).toContain("Codex Main");
+    expect(html).not.toContain("Claude Only");
+    expect(html).toContain("Failover settings");
+  });
+
+  it("客户端路由设置草稿关闭前能识别未保存改动", () => {
+    const initial = { enabled: false, profileIds: ["profile-a"] };
+
+    expect(failoverDraftChanged(initial, { enabled: false, profileIds: ["profile-a"] })).toBe(false);
+    expect(failoverDraftChanged(initial, { enabled: true, profileIds: ["profile-a"] })).toBe(true);
+    expect(failoverDraftChanged(initial, { enabled: false, profileIds: ["profile-b"] })).toBe(true);
+  });
+
+  it("状态页故障切换草稿关闭前能识别未保存改动", () => {
+    const initial = {
+      claude: { enabled: false, profileIds: [] },
+      codex: { enabled: true, profileIds: ["profile-a"] },
+      opencode: { enabled: false, profileIds: [] },
+      gemini: { enabled: false, profileIds: [] },
+    };
+
+    expect(failoverSettingsChanged(initial, structuredClone(initial))).toBe(false);
+    expect(failoverSettingsChanged(initial, {
+      ...initial,
+      codex: { enabled: false, profileIds: ["profile-a"] },
+    })).toBe(true);
   });
 
   it("同一轮渠道实测会同时发出，并在各自完成时立即回传", async () => {
@@ -690,6 +873,31 @@ describe("frontend state boundaries", () => {
     expect(html).toContain("120 ms");
     expect(html).not.toContain("TTFT");
     expect(html).toContain("tint-complete");
+  });
+
+  it("流式首 token 和非流式首包都带有准确语义说明", () => {
+    const html = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(ActivityView, {
+        requests: [{
+          id: "request-hint",
+          client: "codex",
+          profileName: "Streaming",
+          upstreamUrl: "https://api.example/v1/responses",
+          state: "completed",
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          firstTokenLatencyMs: 1_000,
+          streaming: true,
+          outcome: "completed",
+          receivedBytes: 64,
+        }],
+      }),
+    ));
+
+    expect(html).toContain("First valid reasoning, text, or tool event");
+    expect(html).toContain("FIRST TOKEN");
   });
 
   it("流式请求等待首内容时不先显示 TTFB 再中途换指标", () => {

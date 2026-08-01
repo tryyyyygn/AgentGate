@@ -13,6 +13,7 @@ export type BusyAction =
   | "gateway-start"
   | "gateway-stop"
   | "restore-official"
+  | "undo"
   | "settings";
 
 export interface ToastState {

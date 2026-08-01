@@ -113,24 +113,60 @@ async function buildSourceZip(files) {
   }
 }
 
+/** 交付件已收集后清理 Electron Builder 的开发中间产物。 */
+async function cleanBuildIntermediates() {
+  const locked = [];
+  for (const name of ["win-unpacked", "builder-debug.yml"]) {
+    try {
+      await fs.rm(path.join(RELEASE_DIR, name), { recursive: true, force: true });
+    } catch (error) {
+      if (error.code === "EBUSY" || error.code === "EPERM") locked.push(`release/${name}`);
+      else throw error;
+    }
+  }
+  return locked;
+}
+
+function fallbackArtifactName(name) {
+  const extension = path.extname(name)
+  return `${name.slice(0, -extension.length)}-updated${extension}`
+}
+
+async function copyArtifact(name) {
+  const source = path.join(RELEASE_DIR, name)
+  const destination = path.join(OUTPUT_DIR, name)
+  try {
+    await fs.copyFile(source, destination)
+    return name
+  } catch (error) {
+    if (!name.includes("Portable") || (error.code !== "EBUSY" && error.code !== "EPERM")) throw error
+    const fallback = fallbackArtifactName(name)
+    await fs.copyFile(source, path.join(OUTPUT_DIR, fallback))
+    console.log(`交付件被占用，已改用备用文件名：${fallback}`)
+    return fallback
+  }
+}
+
 const locked = await pruneOldVersions();
 await fs.mkdir(OUTPUT_DIR, { recursive: true });
 
+const copiedArtifacts = [];
 for (const name of artifacts) {
   const source = path.join(RELEASE_DIR, name);
   if (!await fs.stat(source).catch(() => undefined)) {
     throw new Error(`缺少构建产物：${name}（先执行 pnpm dist）`);
   }
-  await fs.copyFile(source, path.join(OUTPUT_DIR, name));
+  copiedArtifacts.push(await copyArtifact(name));
 }
 
 await buildSourceZip(await collectSourceFiles());
+const lockedIntermediates = await cleanBuildIntermediates();
 
 const checksumTargets = [
-  `AgentGate-Portable-${releaseLabel}-x64.exe`,
-  `AgentGate-Setup-${releaseLabel}-x64.exe`,
+  copiedArtifacts.find((name) => name.includes("Portable") && name.endsWith(".exe")),
+  copiedArtifacts.find((name) => name.includes("Setup") && name.endsWith(".exe")),
   sourceZip,
-];
+].filter(Boolean);
 const lines = [];
 for (const name of checksumTargets) {
   const digest = await sha256(path.join(OUTPUT_DIR, name));
@@ -142,3 +178,6 @@ console.log(`交付件已整理到 deliverables/（内部 v${version}，交付�
 for (const line of lines) console.log(`  ${line}`);
 console.log("  latest.yml（更新清单，发 Release 时必须上传）");
 if (locked.length > 0) console.log(`旧文件被占用未删除：${locked.join(", ")}`);
+if (lockedIntermediates.length > 0) {
+  console.log(`构建中间产物被占用未删除：${lockedIntermediates.join(", ")}`);
+}

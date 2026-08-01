@@ -18,6 +18,7 @@ const CURRENT_PROFILE_ID = "00000000-0000-4000-8000-000000000101";
 const STABLE_PROFILE_ID = "00000000-0000-4000-8000-000000000102";
 const FAST_PROFILE_ID = "00000000-0000-4000-8000-000000000103";
 const EXCLUDED_PROFILE_ID = "00000000-0000-4000-8000-000000000104";
+const INCOMPATIBLE_PROFILE_ID = "00000000-0000-4000-8000-000000000105";
 
 /**
  * 创建自动切换测试使用的端点快照。
@@ -195,7 +196,9 @@ function failoverHarness() {
     reachable(20), unreachable(20), reachable(20),
   ]);
   const excluded = failoverProfile(EXCLUDED_PROFILE_ID, "Excluded", [reachable(1)]);
-  const profiles = [current, stable, fast, excluded];
+  const incompatible = failoverProfile(INCOMPATIBLE_PROFILE_ID, "Incompatible", [reachable(1)]);
+  incompatible.protocol = "anthropic";
+  const profiles = [current, stable, fast, excluded, incompatible];
   const route = { target: "codex", profileId: CURRENT_PROFILE_ID };
   const apply = vi.fn().mockResolvedValue(undefined);
   const onChange = vi.fn();
@@ -215,7 +218,7 @@ function failoverHarness() {
         claude: { enabled: false, profileIds: [] },
         codex: {
           enabled: true,
-          profileIds: [CURRENT_PROFILE_ID, STABLE_PROFILE_ID, FAST_PROFILE_ID],
+          profileIds: [CURRENT_PROFILE_ID, STABLE_PROFILE_ID, FAST_PROFILE_ID, INCOMPATIBLE_PROFILE_ID],
         },
         opencode: { enabled: false, profileIds: [] },
         gemini: { enabled: false, profileIds: [] },
@@ -633,6 +636,97 @@ describe("自动 URL 切换服务", () => {
     expect(apply).not.toHaveBeenCalled();
   });
 
+  it("设置或网关生命周期变化后清除旧的故障切换冷却窗口", async () => {
+    const { service, apply } = failoverHarness();
+    const failure = {
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 503,
+    };
+
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    await vi.waitFor(() => expect(apply).toHaveBeenCalledWith(STABLE_PROFILE_ID, ["codex"]));
+    expect(service.failoverCooldowns.get("codex")).toBeDefined();
+
+    service.resetFailoverFailures();
+
+    expect(service.failoverCooldowns.has("codex")).toBe(false);
+    expect(service.getPublicState().failover.codex.cooldownUntil).toBeUndefined();
+  });
+
+  it("公开状态跟随当前开关和网关接管状态，并清除重置后的旧失败计数", async () => {
+    const { service, settingsService, gatewayService } = failoverHarness();
+    const failure = {
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 503,
+    };
+
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    expect(service.getPublicState().failover.codex).toMatchObject({
+      enabled: true,
+      failureCount: 2,
+      reason: "failure-counting",
+    });
+
+    service.resetFailoverFailures();
+    settingsService.getPublicSettings.mockReturnValue({
+      failover: {
+        claude: { enabled: false, profileIds: [] },
+        codex: { enabled: false, profileIds: [CURRENT_PROFILE_ID] },
+        opencode: { enabled: false, profileIds: [] },
+        gemini: { enabled: false, profileIds: [] },
+      },
+    });
+    expect(service.getPublicState().failover.codex).toMatchObject({
+      enabled: false,
+      failureCount: 0,
+      reason: "disabled",
+    });
+
+    settingsService.getPublicSettings.mockReturnValue({
+      failover: {
+        claude: { enabled: false, profileIds: [] },
+        codex: { enabled: true, profileIds: [CURRENT_PROFILE_ID] },
+        opencode: { enabled: false, profileIds: [] },
+        gemini: { enabled: false, profileIds: [] },
+      },
+    });
+    gatewayService.getPublicState.mockReturnValue({
+      status: "stopped",
+      engaged: [],
+      routes: [],
+    });
+    expect(service.getPublicState().failover.codex).toMatchObject({
+      enabled: true,
+      failureCount: 0,
+      reason: "not-engaged",
+    });
+  });
+
+  it("公开自动择优状态不包含端点 URL 或其他连接细节", async () => {
+    const tested = profile({
+      endpoints: [
+        endpoint(CURRENT_URL, { status: "unhealthy", latencyMs: 900 }),
+        endpoint(FAST_URL, { latencyMs: 40 }),
+      ],
+    });
+    const { service } = createHarness({ tested });
+
+    await service.runProfile(PROFILE_ID);
+
+    const publicState = service.getPublicState();
+    expect(JSON.stringify(publicState)).not.toContain(CURRENT_URL);
+    expect(JSON.stringify(publicState)).not.toContain(FAST_URL);
+    expect(publicState.profiles[PROFILE_ID]).not.toHaveProperty("baseUrl");
+    expect(publicState.profiles[PROFILE_ID]).not.toHaveProperty("previousBaseUrl");
+  });
+
   it("当前密钥不在候选库时不接管，普通 4xx 和取消也不累计失败", async () => {
     const { service, apply, healthService, settingsService } = failoverHarness();
     settingsService.getPublicSettings.mockReturnValue({
@@ -660,6 +754,62 @@ describe("自动 URL 切换服务", () => {
 
     expect(healthService.probeProfile).not.toHaveBeenCalled();
     expect(apply).not.toHaveBeenCalled();
+  });
+
+  it("故障切换候选必须同时满足方案声明和协议兼容性", async () => {
+    const { service, healthService, settingsService } = failoverHarness();
+    settingsService.getPublicSettings.mockReturnValue({
+      failover: {
+        claude: { enabled: false, profileIds: [] },
+        codex: {
+          enabled: true,
+          profileIds: [CURRENT_PROFILE_ID, STABLE_PROFILE_ID, INCOMPATIBLE_PROFILE_ID],
+        },
+        opencode: { enabled: false, profileIds: [] },
+        gemini: { enabled: false, profileIds: [] },
+      },
+    });
+
+    const failure = {
+      client: "codex",
+      profileId: CURRENT_PROFILE_ID,
+      outcome: "failed",
+      statusCode: 503,
+    };
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+    await service.recordRequestResult(failure);
+
+    expect(healthService.probeProfile).toHaveBeenCalledWith(
+      STABLE_PROFILE_ID,
+      undefined,
+      expect.any(Object),
+    );
+    expect(healthService.probeProfile).not.toHaveBeenCalledWith(
+      INCOMPATIBLE_PROFILE_ID,
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(service.getPublicState().failover.codex.excluded).toContainEqual({
+      profileId: INCOMPATIBLE_PROFILE_ID,
+      reason: "incompatible",
+    });
+  });
+
+  it("新的故障切换决策会清掉旧的排除原因和错误摘要", () => {
+    const { service } = failoverHarness();
+    service.setFailoverDecision("codex", {
+      reason: "no-candidate",
+      excluded: [{ profileId: EXCLUDED_PROFILE_ID, reason: "probe-failed" }],
+      message: "old failure",
+    });
+    service.setFailoverDecision("codex", { reason: "failure-counting", failureCount: 1 });
+
+    expect(service.getPublicState().failover.codex).toMatchObject({
+      reason: "failure-counting",
+      excluded: [],
+    });
+    expect(service.getPublicState().failover.codex.message).toBeUndefined();
   });
 
   it("HTTP 200 流内的协议级渠道失败会累计并触发切换", async () => {

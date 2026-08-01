@@ -67,10 +67,11 @@ export interface AgentGateController {
   stopGateway: (settings?: GatewayStopSettings) => Promise<void>;
   restoreCodexOfficial: () => Promise<void>;
   reassignPort: () => Promise<void>;
-  updateSettings: (patch: Partial<AppSettings>) => Promise<void>;
+  updateSettings: (patch: Partial<AppSettings>) => Promise<boolean>;
   checkForUpdate: () => Promise<void>;
   downloadUpdate: () => Promise<void>;
   installUpdate: () => Promise<void>;
+  undoHistory: (entry: import("../types").HistoryEntry) => Promise<boolean>;
 }
 
 /**
@@ -236,6 +237,10 @@ export function useAgentGateController(): AgentGateController {
     }
     if (event.type === "settings-changed") {
       setData((current) => ({ ...current, settings: event.settings }));
+      return;
+    }
+    if (event.type === "auto-switch-decision") {
+      setData((current) => ({ ...current, autoSwitch: event.autoSwitch }));
       return;
     }
     if (event.type === "update-state-changed") {
@@ -747,11 +752,32 @@ export function useAgentGateController(): AgentGateController {
     }
   }
 
-  async function updateSettings(patch: Partial<AppSettings>): Promise<void> {
-    if (commandLock.current) return;
+  async function undoHistory(entry: import("../types").HistoryEntry): Promise<boolean> {
+    if (commandLock.current || !entry.canUndo) return false;
+    commandLock.current = true;
+    setBusy("undo");
+    try {
+      requestSequence.current += 1;
+      const next = await api.undoHistory(entry.id);
+      requestSequence.current += 1;
+      mergeBootstrap(next);
+      setToast({ kind: "success", message: m.current.toast.undone });
+      return true;
+    } catch (error) {
+      setToast({ kind: "error", message: describeError(error) });
+      await refreshSilently();
+      return false;
+    } finally {
+      commandLock.current = false;
+      setBusy(null);
+    }
+  }
+
+  async function updateSettings(patch: Partial<AppSettings>): Promise<boolean> {
+    if (commandLock.current) return false;
     if (!api.updateSettings) {
       setToast({ kind: "error", message: m.current.toast.unsupported });
-      return;
+      return false;
     }
     commandLock.current = true;
     setBusy("settings");
@@ -765,9 +791,11 @@ export function useAgentGateController(): AgentGateController {
         : result;
       setData((current) => ({ ...current, settings: nextSettings }));
       setToast({ kind: "success", message: m.current.toast.settingsSaved });
+      return true;
     } catch (error) {
       setData((current) => ({ ...current, settings: previous }));
       setToast({ kind: "error", message: describeError(error) });
+      return false;
     } finally {
       commandLock.current = false;
       setBusy(null);
@@ -845,5 +873,6 @@ export function useAgentGateController(): AgentGateController {
     checkForUpdate,
     downloadUpdate,
     installUpdate,
+    undoHistory,
   };
 }

@@ -164,6 +164,13 @@ function createServices() {
     openExternal: (url) => shell.openExternal(url),
   })
   let autoSwitchService
+  const sendAutoSwitchState = () => {
+    if (!mainWindow || mainWindow.isDestroyed() || !autoSwitchService?.getPublicState) return
+    mainWindow.webContents.send(CHANNELS.stateChanged, {
+      type: 'auto-switch-decision',
+      autoSwitch: autoSwitchService.getPublicState(),
+    })
+  }
   const requestMonitor = new RequestMonitorService({
     onChange: (event) => {
       if (!mainWindow || mainWindow.isDestroyed()) return
@@ -201,6 +208,7 @@ function createServices() {
         type: 'gateway-state-changed',
         gateway: event,
       })
+      sendAutoSwitchState()
     },
   })
   const adapters = createAdapters(resolveClientPaths())
@@ -218,6 +226,7 @@ function createServices() {
   const settingsService = new SettingsService({
     store: settingsStore,
     app,
+    getProfileIds: () => profileService.list().then((profiles) => profiles.map((profile) => profile.id)),
     onChanged: (settings) => {
       autoSwitchService?.resetFailoverFailures()
       if (!mainWindow || mainWindow.isDestroyed()) return
@@ -225,6 +234,7 @@ function createServices() {
         type: 'settings-changed',
         settings,
       })
+      sendAutoSwitchState()
     },
   })
   autoSwitchService = new AutoSwitchService({

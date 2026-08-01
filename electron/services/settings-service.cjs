@@ -11,10 +11,18 @@ const FailoverTargetSchema = z.object({
 }).strict()
 
 const FailoverSettingsSchema = z.object({
-  claude: FailoverTargetSchema,
-  codex: FailoverTargetSchema,
-  opencode: FailoverTargetSchema,
-  gemini: FailoverTargetSchema,
+  claude: FailoverTargetSchema.default(() => ({ enabled: false, profileIds: [] })),
+  codex: FailoverTargetSchema.default(() => ({ enabled: false, profileIds: [] })),
+  opencode: FailoverTargetSchema.default(() => ({ enabled: false, profileIds: [] })),
+  gemini: FailoverTargetSchema.default(() => ({ enabled: false, profileIds: [] })),
+}).strict()
+
+const FailoverTargetPatchSchema = FailoverTargetSchema.partial().strict()
+const FailoverSettingsPatchSchema = z.object({
+  claude: FailoverTargetPatchSchema.optional(),
+  codex: FailoverTargetPatchSchema.optional(),
+  opencode: FailoverTargetPatchSchema.optional(),
+  gemini: FailoverTargetPatchSchema.optional(),
 }).strict()
 
 const SettingsSchema = z.object({
@@ -28,7 +36,11 @@ const SettingsSchema = z.object({
   failover: FailoverSettingsSchema.default(() => defaultFailoverSettings()),
 })
 
-const SettingsPatchSchema = SettingsSchema.omit({ version: true }).partial().strict()
+const SettingsPatchSchema = SettingsSchema
+  .omit({ version: true, failover: true })
+  .partial()
+  .extend({ failover: FailoverSettingsPatchSchema.optional() })
+  .strict()
 
 function defaultSettings() {
   return {
@@ -51,8 +63,22 @@ function defaultFailoverSettings() {
   }
 }
 
+function parseSettings(raw) {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const failover = source.failover && typeof source.failover === 'object' && !Array.isArray(source.failover)
+    ? source.failover
+    : {}
+  return SettingsSchema.parse({
+    ...source,
+    failover: Object.fromEntries(Object.entries(defaultFailoverSettings()).map(([target, defaults]) => [
+      target,
+      { ...defaults, ...(failover[target] || {}) },
+    ])),
+  })
+}
+
 class SettingsService {
-  constructor({ store, app, onChanged, executablePath } = {}) {
+  constructor({ store, app, onChanged, executablePath, getProfileIds } = {}) {
     if (!store || !app) throw new Error('SettingsService requires store and app')
     this.store = store
     this.app = app
@@ -60,15 +86,41 @@ class SettingsService {
     this.executablePath = executablePath
       || process.env.PORTABLE_EXECUTABLE_FILE
       || process.execPath
+    this.getProfileIds = getProfileIds
     this.serial = new SerialExecutor()
     this.loaded = false
     this.settings = defaultSettings()
+    this.knownProfileIds = undefined
+  }
+
+  async _refreshKnownProfileIds() {
+    if (typeof this.getProfileIds !== 'function') return undefined
+    const ids = await this.getProfileIds()
+    this.knownProfileIds = new Set(Array.isArray(ids) ? ids : [])
+    return this.knownProfileIds
+  }
+
+  _normalizeFailover(settings) {
+    if (!this.knownProfileIds) return settings
+    const failover = Object.fromEntries(Object.entries(settings.failover).map(([target, value]) => [
+      target,
+      {
+        ...value,
+        profileIds: value.profileIds.filter((id) => this.knownProfileIds.has(id)),
+      },
+    ]))
+    return { ...settings, failover }
   }
 
   async initialize() {
     return this.serial.run(async () => {
       if (!this.loaded) {
-        this.settings = SettingsSchema.parse(await this.store.read())
+        await this._refreshKnownProfileIds()
+        const parsed = parseSettings(await this.store.read())
+        this.settings = this._normalizeFailover(parsed)
+        if (JSON.stringify(parsed) !== JSON.stringify(this.settings)) {
+          await this.store.write(this.settings)
+        }
         this.loaded = true
       }
       this._applyLaunchAtLogin(this.settings.launchAtLogin)
@@ -77,18 +129,31 @@ class SettingsService {
   }
 
   getPublicSettings() {
-    return { ...this.settings }
+    return structuredClone(this.settings)
   }
 
   async update(patch) {
     const parsed = SettingsPatchSchema.parse(patch)
     return this.serial.run(async () => {
       if (!this.loaded) {
-        this.settings = SettingsSchema.parse(await this.store.read())
+        await this._refreshKnownProfileIds()
+        this.settings = this._normalizeFailover(parseSettings(await this.store.read()))
         this.loaded = true
       }
       const previous = this.settings
-      const next = SettingsSchema.parse({ ...previous, ...parsed, version: 1 })
+      await this._refreshKnownProfileIds()
+      const nextInput = {
+        ...previous,
+        ...parsed,
+        version: 1,
+      }
+      if (parsed.failover) {
+        nextInput.failover = Object.fromEntries(Object.keys(defaultFailoverSettings()).map((target) => [
+          target,
+          { ...previous.failover[target], ...(parsed.failover[target] || {}) },
+        ]))
+      }
+      const next = SettingsSchema.parse(this._normalizeFailover(nextInput))
       if (next.launchAtLogin !== previous.launchAtLogin) {
         this._applyLaunchAtLogin(next.launchAtLogin)
       }
@@ -100,6 +165,27 @@ class SettingsService {
         }
         throw error
       }
+      if (typeof this.onChanged === 'function') await this.onChanged(this.getPublicSettings())
+      return this.getPublicSettings()
+    })
+  }
+
+  async removeProfileId(profileId) {
+    return this.serial.run(async () => {
+      if (!this.loaded) {
+        await this._refreshKnownProfileIds()
+        this.settings = this._normalizeFailover(parseSettings(await this.store.read()))
+        this.loaded = true
+      }
+      const failover = Object.fromEntries(Object.entries(this.settings.failover).map(([target, value]) => [
+        target,
+        { ...value, profileIds: value.profileIds.filter((id) => id !== profileId) },
+      ]))
+      const next = SettingsSchema.parse({ ...this.settings, failover })
+      if (JSON.stringify(next) === JSON.stringify(this.settings)) return this.getPublicSettings()
+      // 方案已经从主数据删除；即使设置文件暂时无法写入，当前进程也不能继续引用它。
+      this.settings = next
+      this.settings = await this.store.write(next)
       if (typeof this.onChanged === 'function') await this.onChanged(this.getPublicSettings())
       return this.getPublicSettings()
     })

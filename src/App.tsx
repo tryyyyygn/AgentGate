@@ -3,6 +3,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, ReactElement } from "react";
 import { ActivityView } from "./components/ActivityView";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { ClientRouteSettings } from "./components/ClientRouteSettings";
 import { HintLayer } from "./components/HintLayer";
 import { SessionsView } from "./components/SessionsView";
 import { KeyringView } from "./components/KeyringView";
@@ -18,7 +19,7 @@ import { useAgentGateController } from "./hooks/useAgentGateController";
 import { I18nProvider, useI18n } from "./i18n";
 import type { Messages } from "./i18n";
 import { api, isDesktop } from "./lib/api";
-import type { Profile, ProfileGroup, SaveProfileInput } from "./types";
+import type { ClientTarget, Profile, ProfileGroup, SaveProfileInput } from "./types";
 import type { View } from "./ui-types";
 
 interface EditorState {
@@ -79,6 +80,7 @@ const StatusPage = memo(StatusView, (previous, next) => (
   && previous.profiles === next.profiles
   && previous.gateway === next.gateway
   && previous.settings === next.settings
+  && previous.autoSwitch === next.autoSwitch
   && previous.busy === next.busy
   && previous.busyId === next.busyId
 ));
@@ -95,6 +97,7 @@ const SessionsPage = memo(SessionsView, (previous, next) => (
 const SettingsPage = memo(SettingsView, (previous, next) => (
   bothInactive(previous, next) || (previous.active === next.active
   && previous.settings === next.settings
+  && previous.history === next.history
   && previous.busy === next.busy
   && previous.update === next.update
   && previous.version === next.version)
@@ -125,6 +128,8 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
   const [view, setView] = useState<View>("overview");
   const [editor, setEditor] = useState<EditorState>({ open: false });
   const [pendingDelete, setPendingDelete] = useState<Profile>();
+  const [clientSettingsTarget, setClientSettingsTarget] = useState<ClientTarget>();
+  const [restoreOfficialOpen, setRestoreOfficialOpen] = useState(false);
   const settings = controller.data.settings ?? DEFAULT_SETTINGS;
   const profileGroups = controller.data.profileGroups ?? EMPTY_PROFILE_GROUPS;
   const requestRecords = controller.data.activeRequests ?? [];
@@ -337,7 +342,8 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
           targets: [target],
         })}
         onRelease={(target) => void controller.stopGateway({ targets: [target] })}
-        onRestoreOfficial={() => void controller.restoreCodexOfficial()}
+        onRestoreOfficial={() => setRestoreOfficialOpen(true)}
+        onOpenClientSettings={setClientSettingsTarget}
         onGoActivity={goActivity}
       />
       <KeyringPage
@@ -368,12 +374,28 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
         profiles={controller.data.profiles}
         gateway={gateway}
         settings={settings}
+        autoSwitch={controller.data.autoSwitch}
         busy={Boolean(controller.busy)}
         busyId={controller.busyId}
         onApply={(id, targets) => void controller.applyProfile(id, targets)}
         onSettingsChange={(patch) => void controller.updateSettings(patch)}
         active={view === "status"}
       />
+      {clientSettingsTarget && (
+        <ClientRouteSettings
+          key={clientSettingsTarget}
+          target={clientSettingsTarget}
+          profiles={controller.data.profiles}
+          groups={profileGroups}
+          clients={controller.data.clients}
+          gateway={gateway}
+          settings={settings}
+          autoSwitch={controller.data.autoSwitch}
+          busy={Boolean(controller.busy)}
+          onSave={async (failover) => controller.updateSettings({ failover })}
+          onClose={() => setClientSettingsTarget(undefined)}
+        />
+      )}
       <WalletPage
         active={view === "wallet"}
         onToast={(kind, message) => controller.setToast({ kind, message })}
@@ -389,6 +411,8 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
         settings={settings}
         busy={controller.busy === "settings"}
         update={controller.data.update}
+        history={controller.data.history}
+        onUndoHistory={(entry) => void controller.undoHistory(entry)}
         version={APP_VERSION}
         onChange={(patch) => void controller.updateSettings(patch)}
         onCheckUpdate={() => void controller.checkForUpdate()}
@@ -445,6 +469,20 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
           danger
           onConfirm={() => void confirmDelete()}
           onCancel={() => setPendingDelete(undefined)}
+        />
+      )}
+
+      {restoreOfficialOpen && (
+        <ConfirmDialog
+          title={m.config.restoreOfficialTitle}
+          message={m.config.restoreOfficialMessage}
+          confirmLabel={m.config.restoreOfficialConfirm}
+          cancelLabel={m.confirm.cancel}
+          onConfirm={() => {
+            setRestoreOfficialOpen(false);
+            void controller.restoreCodexOfficial();
+          }}
+          onCancel={() => setRestoreOfficialOpen(false)}
         />
       )}
 

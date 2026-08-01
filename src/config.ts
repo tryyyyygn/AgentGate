@@ -92,6 +92,15 @@ export const EMPTY_BOOTSTRAP: BootstrapData = {
     routes: [],
   },
   settings: DEFAULT_SETTINGS,
+  autoSwitch: {
+    profiles: {},
+    failover: {
+      claude: { enabled: false, failureCount: 0, failureThreshold: 3, reason: "idle", excluded: [], history: [] },
+      codex: { enabled: false, failureCount: 0, failureThreshold: 3, reason: "idle", excluded: [], history: [] },
+      opencode: { enabled: false, failureCount: 0, failureThreshold: 3, reason: "idle", excluded: [], history: [] },
+      gemini: { enabled: false, failureCount: 0, failureThreshold: 3, reason: "idle", excluded: [], history: [] },
+    },
+  },
   activeRequests: [],
 };
 

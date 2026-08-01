@@ -13,7 +13,7 @@ const TAIL_PENDING_HEADROOM_BYTES = 4096
 /** 终止/错误标记跨 chunk 被劈开时的重叠窗口。标记本身最长不过几十个字符。 */
 const MARKER_OVERLAP = 64
 /**
- * 首字定了之后就只剩 usage 值得解析了。这两个键正是 extractTokenUsage 认的全部
+ * 首 token 定了之后就只剩 usage 值得解析了。这两个键正是 extractTokenUsage 认的全部
  * 入口——Anthropic/OpenAI 用 usage，Gemini 用 usageMetadata。
  */
 const USAGE_HINT = /"usage"|"usageMetadata"/
@@ -254,8 +254,8 @@ function parsedJson(value) {
  *
  * 这段代码同步跑在网关的转发热路径上——它不算完，客户端的字节就出不去。老写法
  * 每来一个 chunk 就把整个 64KB 累积缓冲区重新 split + JSON.parse 一遍（而且先按
- * 空行切一遍、再按换行切一遍，每行 parse 两次），是彻头彻尾的 O(n²)。实测首字之前
- * 有 800 个非有效事件时，网关给首字硬加了 1.4 秒；两千个增量的响应总耗时多 387ms。
+ * 空行切一遍、再按换行切一遍，每行 parse 两次），是彻头彻尾的 O(n²)。实测首 token 之前
+ * 有 800 个非有效事件时，网关给首 token 硬加了 1.4 秒；两千个增量的响应总耗时多 387ms。
  *
  * 现在按行增量喂：残缺的半行留到下一片，完整的块当场解析一次就丢。
  */
@@ -278,7 +278,7 @@ class StreamScanner {
     this.dataLines = []
     this.dataBytes = 0
     this.sawSse = false
-    /** 首字已经认出来了——之后除了 usage，什么都不必再解析。 */
+    /** 首 token 已经认出来了——之后除了 usage，什么都不必再解析。 */
     this.settled = false
     this.markerCarry = ''
     this.sawTerminal = false
@@ -531,7 +531,7 @@ class StreamScanner {
   }
 
   /**
-   * 首字认出来之后，剩下的事件里只有 usage 还值得看一眼。
+   * 首 token 认出来之后，剩下的事件里只有 usage 还值得看一眼。
    *
    * 绝大多数增量事件里压根没有 usage，照样 JSON.parse 一遍纯属白烧 CPU——一个
    * 两千增量的回复就是两千次无用的解析，而这活是同步卡在转发路径上的。先用一次
@@ -1023,7 +1023,7 @@ class RequestMonitorService {
     return false
   }
 
-  /** 消化新解析出的 payload：累计 usage、认领模型、判首字。 */
+  /** 消化新解析出的 payload：累计 usage、认领模型、判首 token。 */
   _absorb(entry, payloads, receivedAtMs) {
     let marked = false
     for (const { eventName, payload } of payloads) {

@@ -90,6 +90,7 @@ function registerIpcHandlers({
   profileService,
   clientService,
   healthService,
+  autoSwitchService,
   applyService,
   gatewayService,
   settingsService,
@@ -188,6 +189,7 @@ function registerIpcHandlers({
       history,
       gateway,
       ...(settingsService ? { settings: settingsService.getPublicSettings() } : {}),
+      ...(autoSwitchService?.getPublicState ? { autoSwitch: autoSwitchService.getPublicState() } : {}),
       ...(requestSnapshot.activeRequests ? { activeRequests: requestSnapshot.activeRequests } : {}),
       ...(Number.isFinite(requestSnapshot.activeRequestsRevision)
         ? { activeRequestsRevision: requestSnapshot.activeRequestsRevision }
@@ -256,7 +258,10 @@ function registerIpcHandlers({
         stopGateway,
       })
       try {
-        return await profileService.delete(id)
+        const result = await profileService.delete(id)
+        // 方案已删除后不能因设置清理失败回滚路由到不存在的方案；下次读取时仍会再次过滤。
+        await settingsService?.removeProfileId?.(id).catch(() => {})
+        return result
       } catch (error) {
         if (routeSnapshot) await gatewayService.restoreRoutes(routeSnapshot).catch(() => {})
         throw error

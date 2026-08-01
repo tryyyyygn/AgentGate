@@ -1408,7 +1408,7 @@ describe("GatewayService", () => {
     expect(service.getActiveRequests()).toEqual([{ id: "request-1" }]);
   });
 
-  it("真实请求监视器串联采集元数据、首字和 usage 且不公开正文或完整 Key", async () => {
+  it("真实请求监视器串联采集元数据、首 token 和 usage 且不公开正文或完整 Key", async () => {
     const monitor = new RequestMonitorService();
     let upstreamHeaders;
     const upstream = await listen((request, response) => {

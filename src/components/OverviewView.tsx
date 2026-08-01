@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronDown, Repeat2, RotateCcw } from "lucide-react";
+import { ArrowRight, ChevronDown, Repeat2, RotateCcw, Settings2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { CLIENT_META, CLIENT_TARGET_ORDER, PROTOCOL_META } from "../config";
@@ -21,6 +21,7 @@ import type {
   Profile,
 } from "../types";
 import { NixieTubes } from "./NixieTubes";
+import { ModelName } from "./ModelName";
 import { RollingNumber } from "./RollingNumber";
 
 const HEALTH_DOT: Record<HealthState, string> = {
@@ -125,6 +126,7 @@ interface OverviewViewProps {
   onRelease: (target: ClientTarget) => void;
   /** 恢复 Codex 官方登录模式并解除网关分配。 */
   onRestoreOfficial: () => void;
+  onOpenClientSettings: (target: ClientTarget) => void;
   onGoActivity: () => void;
 }
 
@@ -146,6 +148,7 @@ export function OverviewView({
   onEngage,
   onRelease,
   onRestoreOfficial,
+  onOpenClientSettings,
   onGoActivity,
 }: OverviewViewProps): ReactElement {
   const { m, fill } = useI18n();
@@ -329,23 +332,24 @@ export function OverviewView({
               const engaged = gateway.engaged.includes(target);
               return (
                 <div className="socket-cell" key={target}>
-                  <button
-                    type="button"
-                    className={cardClass}
-                    style={{ animationDelay: `${80 + index * 45}ms` }}
-                    aria-pressed={engaged}
-                    aria-label={hasProfile
-                      ? fill(engaged ? m.overview.release : m.overview.engage,
-                        { client: CLIENT_META[target].label })
-                      : fill(m.overview.editToEnable, { client: CLIENT_META[target].label })}
-                    disabled={busy}
-                    onClick={() => {
-                      // 还没分配方案的客户端点了先选方案——没方案可接管
-                      if (!hasProfile) setPickerFor(open ? undefined : target);
-                      else if (engaged) onRelease(target);
-                      else onEngage(target);
-                    }}
-                  >
+                  <div className="socket-card-wrap">
+                    <button
+                      type="button"
+                      className={cardClass}
+                      style={{ animationDelay: `${80 + index * 45}ms` }}
+                      aria-pressed={engaged}
+                      aria-label={hasProfile
+                        ? fill(engaged ? m.overview.release : m.overview.engage,
+                          { client: CLIENT_META[target].label })
+                        : fill(m.overview.editToEnable, { client: CLIENT_META[target].label })}
+                      disabled={busy}
+                      onClick={() => {
+                        // 还没分配方案的客户端点了先选方案——没方案可接管
+                        if (!hasProfile) setPickerFor(open ? undefined : target);
+                        else if (engaged) onRelease(target);
+                        else onEngage(target);
+                      }}
+                    >
                     {/* 接管时由下往上涨满，断开时退回去 */}
                     <span className="socket-fill" aria-hidden="true" />
                     <span className="socket-no">{String(index + 1).padStart(2, "0")}</span>
@@ -369,7 +373,18 @@ export function OverviewView({
                         {engaged ? m.overview.engaged : m.overview.notEngaged}
                       </span>
                     </span>
-                  </button>
+                    </button>
+                    <button
+                      type="button"
+                      className="socket-settings"
+                      data-hint={m.status.failoverTitle}
+                      aria-label={`${CLIENT_META[target].label} · ${m.status.failoverTitle}`}
+                      disabled={busy}
+                      onClick={() => onOpenClientSettings(target)}
+                    >
+                      <Settings2 size={12} />
+                    </button>
+                  </div>
                   {target === "codex" ? (
                     <button
                       type="button"
@@ -416,7 +431,7 @@ export function OverviewView({
                               <strong>{option.name}</strong>
                               <code>
                                 {PROTOCOL_META[option.protocol].short.toUpperCase()} ·{" "}
-                                {option.model || m.overview.clientDefault}
+                                <ModelName value={option.model} fallback={m.overview.clientDefault} />
                               </code>
                             </span>
                             <small className={tag.className}>{tag.text}</small>
