@@ -43,9 +43,8 @@ export interface Messages {
     limited: string;
     unhealthy: string;
     unknown: string;
-    availability: string;
+    p95: string;
     response: string;
-    firstByte: string;
     lastCheck: string;
     checking: string;
     countdown: string;
@@ -139,10 +138,8 @@ export interface Messages {
     create: string;
     active: string;
     tokens: string;
-    cache: string;
     breakdown: string;
     awaitingSamples: string;
-    statLine: string;
     switchTo: string;
     assign: string;
     inUseHint: string;
@@ -249,15 +246,16 @@ export interface Messages {
     done: string;
     fail: string;
     cache: string;
+    firstToken: string;
+    firstByte: string;
+    streamMode: string;
+    syncMode: string;
     /** 请求行里 ↓↑CWR 五个缩写的全称，只在悬停提示里出现。 */
     tipIn: string;
     tipOut: string;
     tipCache: string;
     tipWrite: string;
     tipReason: string;
-    firstToken: string;
-    firstTokenHint: string;
-    firstByteHint: string;
     empty: string;
     noMatch: string;
     resolving: string;
@@ -477,9 +475,8 @@ const zh: Messages = {
     limited: "延迟",
     unhealthy: "故障",
     unknown: "未检测",
-    availability: "可用率",
+    p95: "P95 延迟",
     response: "总耗时",
-    firstByte: "首包",
     lastCheck: "最近检测",
     checking: "检测中",
     countdown: "{seconds} 秒",
@@ -573,10 +570,8 @@ const zh: Messages = {
     create: "新建",
     active: "使用中",
     tokens: "累计",
-    cache: "缓存率",
     breakdown: "Token 拆解",
     awaitingSamples: "尚无样本",
-    statLine: "1 小时 {availability}% · 平均 {latency}",
     switchTo: "将「{name}」分配给全部适用客户端",
     assign: "分配",
     inUseHint: "已在使用中，点击重新分配全部适用客户端",
@@ -683,14 +678,15 @@ const zh: Messages = {
     done: "完成",
     fail: "异常",
     cache: "缓存率",
-    tipIn: "全部提示 Token（含缓存读写）",
+    firstToken: "首字",
+    firstByte: "首字节",
+    streamMode: "流式",
+    syncMode: "同步",
+    tipIn: "未缓存提示 Token",
     tipOut: "输出 Token",
-    tipCache: "命中的提示 Token（便宜）",
-    tipWrite: "写入的缓存（按 1.25× 计费，最贵）",
-    tipReason: "推理 Token（已含在输出里）",
-    firstToken: "首 token",
-    firstTokenHint: "流式响应中首次收到有效推理、文本或工具事件；用于近似思考开始，不代表不可见的精确计费时刻。",
-    firstByteHint: "上游响应第一字节到达（TTFB）。非流式响应只显示这个指标。",
+    tipCache: "命中的提示 Token",
+    tipWrite: "写入的缓存",
+    tipReason: "推理 Token",
     empty: "还没有请求记录 · 网关收到请求后会在这里即时显示",
     noMatch: "没有符合筛选条件的请求",
     resolving: "正在解析上游",
@@ -912,9 +908,8 @@ const zhTW: Messages = {
     limited: "延遲",
     unhealthy: "故障",
     unknown: "未檢測",
-    availability: "可用率",
+    p95: "P95 延遲",
     response: "總耗時",
-    firstByte: "首包",
     lastCheck: "最近檢測",
     checking: "檢測中",
     countdown: "{seconds} 秒",
@@ -1008,10 +1003,8 @@ const zhTW: Messages = {
     create: "新增",
     active: "使用中",
     tokens: "累計",
-    cache: "Cache 率",
     breakdown: "Token 拆解",
     awaitingSamples: "尚無樣本",
-    statLine: "1 小時 {availability}% · 平均 {latency}",
     switchTo: "將「{name}」分配給所有適用 Client",
     assign: "分配",
     inUseHint: "使用中。點一下重新套用到所有適用的 Client",
@@ -1118,14 +1111,15 @@ const zhTW: Messages = {
     done: "完成",
     fail: "異常",
     cache: "Cache 率",
-    tipIn: "全部提示 Token（含快取讀寫）",
+    firstToken: "首字",
+    firstByte: "首位元組",
+    streamMode: "串流",
+    syncMode: "同步",
+    tipIn: "未快取提示 Token",
     tipOut: "輸出 Token",
-    tipCache: "命中的提示 Token（便宜）",
-    tipWrite: "寫入的快取（1.25× 計費，最貴）",
-    tipReason: "推理 Token（已算在輸出裡）",
-    firstToken: "首 token",
-    firstTokenHint: "串流回應首次收到有效推理、文字或工具事件；用來接近思考開始，不代表不可見的精確計費時刻。",
-    firstByteHint: "上游回應第一個位元組到達（TTFB）。非串流回應只顯示這個指標。",
+    tipCache: "命中的提示 Token",
+    tipWrite: "寫入的快取",
+    tipReason: "推理 Token",
     empty: "還沒有請求 · Gateway 收到請求後會即時顯示在這裡",
     noMatch: "沒有符合篩選條件的請求",
     resolving: "解析上游中",
@@ -1347,9 +1341,8 @@ const ja: Messages = {
     limited: "遅延",
     unhealthy: "障害",
     unknown: "未計測",
-    availability: "可用率",
+    p95: "P95 遅延",
     response: "合計",
-    firstByte: "初バイト",
     lastCheck: "最終チェック",
     checking: "チェック中",
     countdown: "{seconds} 秒",
@@ -1443,10 +1436,8 @@ const ja: Messages = {
     create: "追加",
     active: "使用中",
     tokens: "累計",
-    cache: "キャッシュ率",
     breakdown: "トークン内訳",
     awaitingSamples: "サンプルなし",
-    statLine: "1時間 {availability}% · 平均 {latency}",
     switchTo: "「{name}」を対応クライアントすべてに割り当て",
     assign: "割り当て",
     inUseHint: "使用中。クリックで対象クライアントすべてに再適用",
@@ -1553,14 +1544,15 @@ const ja: Messages = {
     done: "完了",
     fail: "異常",
     cache: "キャッシュ率",
-    tipIn: "入力トークン合計（キャッシュ読み書き込み）",
+    firstToken: "初回トークン",
+    firstByte: "TTFB",
+    streamMode: "ストリーミング",
+    syncMode: "同期",
+    tipIn: "未キャッシュ入力トークン",
     tipOut: "出力トークン",
-    tipCache: "ヒットした入力トークン（安い）",
-    tipWrite: "キャッシュ書き込み（1.25 倍課金、最も高い）",
-    tipReason: "推論トークン（出力に含まれる）",
-    firstToken: "初回 token",
-    firstTokenHint: "ストリーミング応答で最初の有効な推論・テキスト・ツールイベントを受信した時刻。思考開始の近似であり、不可視の正確な課金時刻ではありません。",
-    firstByteHint: "上流応答の最初のバイトが到着した時刻（TTFB）。非ストリーミング応答ではこの値だけを表示します。",
+    tipCache: "ヒットした入力トークン",
+    tipWrite: "キャッシュ書き込み",
+    tipReason: "推論トークン",
     empty: "リクエストはまだありません · ゲートウェイが受けた時点でここに出ます",
     noMatch: "条件に一致するリクエストがありません",
     resolving: "上流を解決中",
@@ -1782,9 +1774,8 @@ const en: Messages = {
     limited: "HIGH LATENCY",
     unhealthy: "DOWN",
     unknown: "UNTESTED",
-    availability: "AVAILABILITY",
+    p95: "P95 LATENCY",
     response: "TOTAL",
-    firstByte: "TTFB",
     lastCheck: "LAST PROBE",
     checking: "PROBING",
     countdown: "{seconds}s",
@@ -1878,10 +1869,8 @@ const en: Messages = {
     create: "NEW",
     active: "ACTIVE",
     tokens: "TOKENS",
-    cache: "CACHE",
     breakdown: "TOKEN BREAKDOWN",
     awaitingSamples: "AWAITING SAMPLES",
-    statLine: "1H {availability}% · AVG {latency}",
     switchTo: "Assign {name} to all compatible clients",
     assign: "ASSIGN",
     inUseHint: "Already active — click to re-bind all compatible clients",
@@ -1988,14 +1977,15 @@ const en: Messages = {
     done: "DONE",
     fail: "FAIL",
     cache: "CACHE",
-    tipIn: "All prompt tokens incl. cache",
-    tipOut: "Output tokens",
-    tipCache: "Cached prompt tokens (cheap)",
-    tipWrite: "Cache write (billed 1.25x, priciest)",
-    tipReason: "Reasoning tokens (already inside output)",
     firstToken: "FIRST TOKEN",
-    firstTokenHint: "First valid reasoning, text, or tool event in a streamed response; an approximation of thinking start, not the exact hidden billing timestamp.",
-    firstByteHint: "Time until the first upstream response byte (TTFB). Non-streaming responses show only this metric.",
+    firstByte: "TTFB",
+    streamMode: "STREAM",
+    syncMode: "SYNC",
+    tipIn: "Uncached prompt tokens",
+    tipOut: "Output tokens",
+    tipCache: "Cached prompt tokens",
+    tipWrite: "Cache write",
+    tipReason: "Reasoning tokens",
     empty: "NO REQUESTS YET · gateway traffic appears here in real time",
     noMatch: "NO MATCHING REQUESTS",
     resolving: "RESOLVING",

@@ -948,6 +948,13 @@ trust_level = "trusted"
       { baseline },
     )).toBe(GATEWAY_OWNERSHIP.CONFLICT);
 
+    expect(await adapters.codex.gatewayOwnership(
+      profile,
+      "gateway-secret",
+      undefined,
+      { baseline, allowExternalGatewayHandoff: true },
+    )).toBe(GATEWAY_OWNERSHIP.RELEASED);
+
     const movedEndpoint = extendedGateway.replace(
       'base_url = "http://127.0.0.1:19431/codex/persistent-route-token"',
       'base_url = "https://user.example/v1"',

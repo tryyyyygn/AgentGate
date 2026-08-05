@@ -82,6 +82,12 @@ export function formatTokenCount(value?: number): string {
   return Math.round(value).toLocaleString();
 }
 
+/** 将 Token 数量完整显示，不使用 K/M/B 短格式。 */
+export function formatTokenCountFull(value?: number): string {
+  if (value === undefined || !Number.isFinite(value)) return "--";
+  return Math.round(value).toLocaleString();
+}
+
 /**
  * 将毫秒格式化为 ms/s 时长文本。
  *

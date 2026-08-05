@@ -23,9 +23,8 @@ import type { DragEvent as ReactDragEvent, FormEvent, ReactElement } from "react
 import { CLIENT_META, PROTOCOL_META } from "../config";
 import { useI18n } from "../i18n";
 import type { Messages } from "../i18n";
-import { cacheRateTier, getEndpointMetrics, getHealthBarTone, LIMITED_LATENCY_MS } from "../lib/health";
+import { getHealthBarTone, LIMITED_LATENCY_MS } from "../lib/health";
 import { RollingNumber } from "./RollingNumber";
-import type { EndpointMetrics } from "../lib/health";
 import { formatTokenCount, relativeTime } from "../lib/format";
 import { useFlipList } from "../lib/useFlipList";
 import type {
@@ -204,17 +203,6 @@ function endpointDot(endpoint: ProfileEndpoint): string {
   if (status === "limited") return "dot-warn";
   if (status === "unhealthy") return "dot-bad";
   return "dot-unknown";
-}
-
-/** 累计平均缓存率：累计缓存命中 ÷ 累计输入，返回 0–1 的比值。 */
-function cumulativeCacheRate(profile: Profile): number | undefined {
-  const input = profile.tokenInputTotal;
-  const cached = profile.tokenCachedTotal;
-  if (!input || cached === undefined || !Number.isFinite(input) || !Number.isFinite(cached)) {
-    return undefined;
-  }
-  // 分母已归一化成「含缓存读写的全部提示 token」，比值天然 ≤ 1，不必再夹
-  return cached / input;
 }
 
 function endpointLatency(endpoint: ProfileEndpoint, m: Messages): string {
@@ -749,10 +737,6 @@ export function KeyringView({
               const summary = healthSummary(profile, m);
               const activeEndpoint = profile.endpoints
                 .find((endpoint) => endpoint.url === profile.baseUrl) ?? profile.endpoints[0];
-              const metrics: EndpointMetrics = activeEndpoint
-                ? getEndpointMetrics(activeEndpoint)
-                : { sampleCount: 0 };
-              const cacheRate = cumulativeCacheRate(profile);
               const testing = testingIds.has(profile.id);
               const discovering = busy === "test" && busyId === profile.id;
               const applying = busy === "apply" && busyId === profile.id;
@@ -846,26 +830,9 @@ export function KeyringView({
                         <RollingNumber value={formatTokenCount(profile.tokenUsageTotal ?? 0)} />
                         <small>{m.keys.tokens}</small>
                       </span>
-                      <span className="keyring-usage">
-                        <RollingNumber
-                          className={cacheRateTier(cacheRate === undefined ? undefined : cacheRate * 100)}
-                          value={cacheRate === undefined ? "———" : `${(cacheRate * 100).toFixed(1)}%`}
-                        />
-                        <small>{m.keys.cache}</small>
-                      </span>
                       <HealthBars endpoint={activeEndpoint} label={m.keys.awaitingSamples} />
                       <span className="keyring-stat">
                         <RollingNumber as="strong" className={summary.className} value={summary.label} />
-                        <small>
-                          {metrics.sampleCount > 0
-                            ? fill(m.keys.statLine, {
-                              availability: metrics.availability ?? 0,
-                              latency: metrics.averageLatencyMs === undefined
-                                ? "———"
-                                : `${metrics.averageLatencyMs}ms`,
-                            })
-                            : m.keys.awaitingSamples}
-                        </small>
                       </span>
                     </button>
                     <span className="keyring-tools">

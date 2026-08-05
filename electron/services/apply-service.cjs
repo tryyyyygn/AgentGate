@@ -379,6 +379,7 @@ class ApplyService {
         gatewayState,
         localToken,
         baselineData,
+        allowExternalGatewayHandoff: true,
       })
       try {
         await this._commitDrafts(recovery.drafts)
@@ -393,13 +394,15 @@ class ApplyService {
       const targets = groups.flatMap((group) => group.targets).join(', ')
       throw new Error(`Configuration kept changing while stopping the gateway: ${targets}`)
     }
+    const releasedTargets = new Set(recovery.skippedTargets)
+    const resumeTargets = nextResumeTargets.filter((target) => !releasedTargets.has(target))
     // 还有客户端接管着就让服务器继续跑，只把这几个从接管集合里摘掉
     const state = remaining.length > 0
-      ? await this.gatewayService.setEngagedTargets(remaining, { resumeTargets: nextResumeTargets })
+      ? await this.gatewayService.setEngagedTargets(remaining, { resumeTargets })
       : await this.gatewayService.stop({
           clearRoutes: false,
           preserveResumeIntent,
-          resumeTargets: nextResumeTargets,
+          resumeTargets,
         })
     const nextBaselines = { ...baselineData.baselines }
     for (const target of recovery.clearedTargets) delete nextBaselines[target]
@@ -620,7 +623,13 @@ class ApplyService {
     return this.gatewayService.getPublicState()
   }
 
-  async _prepareGatewayRecovery({ groups, gatewayState, localToken, baselineData }) {
+  async _prepareGatewayRecovery({
+    groups,
+    gatewayState,
+    localToken,
+    baselineData,
+    allowExternalGatewayHandoff = false,
+  }) {
     const drafts = []
     const skippedTargets = []
     const clearedTargets = []
@@ -655,6 +664,7 @@ class ApplyService {
           {
             gateway: true,
             baseline,
+            allowExternalGatewayHandoff,
             allowLegacyModelDiscovery: target === TARGET.CLAUDE
               && storedBaseline?.contractVersion === undefined,
           },

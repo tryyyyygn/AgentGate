@@ -9,8 +9,8 @@ import type { ReactElement } from "react";
 import { CLIENT_META } from "../config";
 import { useI18n } from "../i18n";
 import type { Messages } from "../i18n";
-import { formatDuration, formatTokenCount } from "../lib/format";
-import { cacheRateTier } from "../lib/health";
+import { formatDuration, formatTokenCount, formatTokenCountFull } from "../lib/format";
+import { cacheRateTier, responseLatencyTier } from "../lib/health";
 import { RollingNumber } from "./RollingNumber";
 import { ModelName } from "./ModelName";
 import type { ActiveRequest, ClientTarget } from "../types";
@@ -46,7 +46,23 @@ const REASONING_LABEL: Record<string, string> = {
   medium: "MED",
   high: "HIGH",
   xhigh: "MAX",
+  max: "MAX",
+  ultra: "ULTRA",
 };
+
+function formatReasoningEffort(value?: string): string {
+  const normalized = value?.trim().toLocaleLowerCase();
+  if (!normalized) return "DEFAULT";
+  return REASONING_LABEL[normalized] ?? normalized.toLocaleUpperCase();
+}
+
+function uncachedInputTokens(tokens?: ActiveRequest["tokenUsage"]): number | undefined {
+  const input = tokens?.inputTokens;
+  if (input === undefined || !Number.isFinite(input)) return undefined;
+  const cached = Number.isFinite(tokens?.cachedTokens) ? tokens?.cachedTokens ?? 0 : 0;
+  const cacheWrite = Number.isFinite(tokens?.cacheWriteTokens) ? tokens?.cacheWriteTokens ?? 0 : 0;
+  return Math.max(0, input - cached - cacheWrite);
+}
 
 function clientLabel(client: ActiveRequest["client"]): string {
   return client in CLIENT_META
@@ -59,16 +75,6 @@ function clientTone(client: ActiveRequest["client"]): string {
   return client in CLIENT_META
     ? `tone-${CLIENT_META[client as ClientTarget].tone}`
     : "";
-}
-
-/** 首包/首内容时延色阶：<5s 绿、5-10s 蓝、10-30s 黄、30-60s 橙、60s+ 红。 */
-function latencyTier(milliseconds?: number): string {
-  if (milliseconds === undefined || !Number.isFinite(milliseconds)) return "tier-quiet";
-  if (milliseconds < 5_000) return "tier-good";
-  if (milliseconds < 10_000) return "tier-info";
-  if (milliseconds < 30_000) return "tier-warn";
-  if (milliseconds < 60_000) return "tier-orange";
-  return "tier-bad";
 }
 
 /**
@@ -130,26 +136,26 @@ interface RequestRowProps {
 const RequestRow = memo(function RequestRow({
   request, elapsed, state, m, clock,
 }: RequestRowProps): ReactElement {
-  // 流式请求以首个生成信号（含隐藏推理开始）为 TTFT。
+  // 流式请求以首个生成信号（含隐藏推理开始）为首字时延。
   const contentTiming = request.streaming === true;
   const firstLatency = contentTiming ? request.firstTokenLatencyMs : request.firstByteLatencyMs;
-  const firstLabel = contentTiming ? "TTFT" : "TTFB";
-  const firstHint = contentTiming ? m.stream.firstTokenHint : m.stream.firstByteHint;
-  const reasoning = request.reasoningEffort
-    ? REASONING_LABEL[request.reasoningEffort.toLocaleLowerCase()] ?? request.reasoningEffort
-    : "DEFAULT";
-  const subline = reasoning
-    + (request.streaming === true ? " · STREAM" : request.streaming === false ? " · SYNC" : "");
+  const firstLabel = contentTiming ? m.stream.firstToken : m.stream.firstByte;
+  const transport = request.streaming === true
+    ? m.stream.streamMode
+    : request.streaming === false ? m.stream.syncMode : undefined;
+  const transportClass = request.streaming === true ? "streaming" : request.streaming === false ? "sync" : "";
+  const reasoning = formatReasoningEffort(request.reasoningEffort);
   const tokens = request.tokenUsage;
+  const uncachedInput = uncachedInputTokens(tokens);
   const rate = cacheRate(request);
-  // 行里是缩写，悬停给全称
+  // 行里是缩写，悬停补充口径
   const tokenBreakdown = tokens
     ? [
-      `↓ ${m.stream.tipIn} ${formatTokenCount(tokens.inputTokens)}`,
-      `↑ ${m.stream.tipOut} ${formatTokenCount(tokens.outputTokens)}`,
+      `↓ ${m.stream.tipIn} ${formatTokenCountFull(uncachedInput)}`,
+      `↑ ${m.stream.tipOut} ${formatTokenCountFull(tokens.outputTokens)}`,
       `C ${m.stream.tipCache} ${formatTokenCount(tokens.cachedTokens)}`,
       `W ${m.stream.tipWrite} ${formatTokenCount(tokens.cacheWriteTokens)}`,
-      `R ${m.stream.tipReason} ${formatTokenCount(tokens.reasoningTokens)}`,
+      `R ${m.stream.tipReason} ${formatTokenCountFull(tokens.reasoningTokens)}`,
     ].join("\n")
     : undefined;
 
@@ -157,7 +163,8 @@ const RequestRow = memo(function RequestRow({
     <article className="request-row">
       <span
         className={`request-state-icon ${state.tint} ${state.breathe ? "breathe" : ""}`}
-        data-hint={state.label}
+        role="img"
+        aria-label={state.label}
       >
         <RequestStateIcon meta={state} />
       </span>
@@ -168,18 +175,20 @@ const RequestRow = memo(function RequestRow({
             {clientLabel(request.client)}
           </small>
         </span>
-        <code className="request-sub" data-hint={request.upstreamUrl}>
-          {formatClock(request.startedAt, clock)} · {request.upstreamUrl || m.stream.resolving}
-        </code>
+      </span>
+      <span className={`request-transport${transportClass ? ` ${transportClass}` : ""}`}>
+        <strong>{transport ?? "———"}</strong>
       </span>
       <span className="request-model">
         <code data-hint={request.model}><ModelName value={request.model} /></code>
-        <small>{subline}</small>
+      </span>
+      <span className="request-reasoning">
+        <strong>{reasoning}</strong>
       </span>
       <span className="request-tokens">
         <span className="tok-io">
-          <RollingNumber className="tok-in" value={`↓${formatTokenCount(tokens?.inputTokens)}`} />
-          <RollingNumber className="tok-out" value={`↑${formatTokenCount(tokens?.outputTokens)}`} />
+          <RollingNumber className="tok-in" value={`↓${formatTokenCountFull(uncachedInput)}`} />
+          <RollingNumber className="tok-out" value={`↑${formatTokenCountFull(tokens?.outputTokens)}`} />
         </span>
         {/*
           四个口径一起列，谁也不顶替谁。
@@ -189,7 +198,7 @@ const RequestRow = memo(function RequestRow({
         <small className="tok-detail" data-hint={tokenBreakdown}>
           <RollingNumber as="span" className="tok-cache" value={`C ${formatTokenCount(tokens?.cachedTokens)}`} />
           <RollingNumber as="span" className="tok-write" value={`W ${formatTokenCount(tokens?.cacheWriteTokens)}`} />
-          <RollingNumber as="span" className="tok-reason" value={`R ${formatTokenCount(tokens?.reasoningTokens)}`} />
+          <RollingNumber as="span" className="tok-reason" value={`R ${formatTokenCountFull(tokens?.reasoningTokens)}`} />
         </small>
       </span>
       <span className="cache-rate">
@@ -201,16 +210,14 @@ const RequestRow = memo(function RequestRow({
       </span>
       <span className="request-timing">
         <RollingNumber ticker value={formatDuration(elapsed)} />
-        <small
-          className={latencyTier(firstLatency)}
-          data-hint={firstHint}
-          title={firstHint}
-          aria-label={`${contentTiming ? m.stream.firstToken : firstLabel} ${formatDuration(firstLatency)}`}
-        >
-          {firstLabel} {formatDuration(firstLatency)}
+        <small>
+          {firstLabel}{" "}
+          <span className={responseLatencyTier(firstLatency)}>{formatDuration(firstLatency)}</span>
         </small>
       </span>
-      <strong className={`request-state-label ${state.tint}`}>{state.label}</strong>
+      <time className="request-time" dateTime={request.startedAt}>
+        {formatClock(request.startedAt, clock)}
+      </time>
     </article>
   );
 });

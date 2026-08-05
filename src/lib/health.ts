@@ -45,6 +45,15 @@ export function cacheRateTier(percent?: number): string {
   return "tier-bad";
 }
 
+/** 响应时延色阶：<5s 绿、5-10s 蓝、10-60s 黄、60s+ 红。 */
+export function responseLatencyTier(milliseconds?: number): string {
+  if (milliseconds === undefined || !Number.isFinite(milliseconds)) return "tier-quiet";
+  if (milliseconds < 5_000) return "tier-good";
+  if (milliseconds < 10_000) return "tier-info";
+  if (milliseconds < 60_000) return "tier-warn";
+  return "tier-bad";
+}
+
 export function getEndpointMetrics(endpoint: ProfileEndpoint): EndpointMetrics {
   const now = Date.now();
   const samples = (endpoint.healthHistory ?? []).filter((sample) => {
