@@ -18,6 +18,7 @@ import { CLIENT_META, CLIENT_TARGET_ORDER, DEFAULT_SETTINGS, PROTOCOL_META } fro
 import { useI18n } from "../i18n";
 import { api } from "../lib/api";
 import { describeError, formatCompactDateTime, formatDuration } from "../lib/format";
+import { responseLatencyTier } from "../lib/health";
 import { ConfirmDialog } from "./ConfirmDialog";
 import type {
   AppSettings,
@@ -30,7 +31,7 @@ import type {
 } from "../types";
 
 const DEFAULT_INTERVAL_MS = 120_000;
-const MAX_SAMPLES = 60;
+const MAX_SAMPLES = 100;
 const PULSE_SLOTS = 30;
 const HEALTHY_RESPONSE_MS = 5_000;
 const SMOOTH_RESPONSE_MS = 10_000;
@@ -95,9 +96,13 @@ export function probeCountdownSeconds(nextProbeAt: number, now = Date.now()): nu
   return Math.max(0, Math.ceil((nextProbeAt - now) / 1_000));
 }
 
-export function probeAvailability(samples: ReadonlyArray<ProbeResult>): number | undefined {
-  if (samples.length === 0) return undefined;
-  return Math.round((samples.filter((sample) => sample.ok).length / samples.length) * 100);
+export function probeP95(samples: ReadonlyArray<ProbeResult>): number | undefined {
+  const durations = samples
+    .map((sample) => sample.totalMs)
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (durations.length < 5) return undefined;
+  return durations[Math.ceil(durations.length * .95) - 1];
 }
 
 export async function probeProfilesTogether<T extends { id: string }>(
@@ -805,7 +810,7 @@ export function StatusView({
               <span role="columnheader">{m.status.model}</span>
               <span role="columnheader">{m.status.state}</span>
               <span role="columnheader">{m.status.response}</span>
-              <span role="columnheader">{m.status.availability}</span>
+              <span role="columnheader">{m.status.p95}</span>
               <span role="columnheader">{m.status.history}</span>
               <span role="columnheader">{m.status.lastCheck}</span>
               <span role="columnheader">{m.status.action}</span>
@@ -822,7 +827,7 @@ export function StatusView({
                 .filter(Boolean)
                 .filter((option) => option !== defaultModel || option === selectedModel);
               const historySamples = visibleProbeSamples(record.samples);
-              const availabilityValue = probeAvailability(historySamples);
+              const p95Value = probeP95(record.samples);
               const lastCheck = record.result?.checkedAt;
               const applying = busyId === profile.id;
               const current = currentProfileIds.has(profile.id);
@@ -832,7 +837,7 @@ export function StatusView({
               );
               return (
                 <div
-                  className={`status-row ${state} ${current ? "current" : ""} ${disabled ? "disabled" : ""} ${record.checking ? "checking" : ""}`}
+                  className={`status-row ${state} ${disabled ? "disabled" : ""} ${record.checking ? "checking" : ""}`}
                   key={profile.id}
                   role="row"
                 >
@@ -849,12 +854,11 @@ export function StatusView({
                   </label>
 
                   <div className="status-row-channel" role="cell">
-                    <span className={`status-row-mark ${current ? "current" : ""}`}>
-                      {current ? <Zap size={12} /> : <Radio size={12} />}
+                    <span className="status-row-mark">
+                      <Radio size={12} />
                     </span>
                     <span className="status-row-name">
                       <strong title={profile.name}>{profile.name}</strong>
-                      {current && <small>{m.keys.active}</small>}
                     </span>
                   </div>
 
@@ -887,16 +891,17 @@ export function StatusView({
                   </span>
 
                   <span className="status-row-latency" role="cell">
-                    <strong>{record.result ? formatDuration(record.result.totalMs) : "———"}</strong>
-                    <small>{m.status.firstByte} {record.result ? formatDuration(record.result.firstByteMs) : "———"}</small>
+                    <strong className={responseLatencyTier(record.result?.totalMs)}>
+                      {record.result ? formatDuration(record.result.totalMs) : "———"}
+                    </strong>
                   </span>
 
-                  <span className={`status-row-availability ${state}`} role="cell">
-                    <strong>{availabilityValue === undefined ? "———" : `${availabilityValue}%`}</strong>
+                  <span className="status-row-p95" role="cell">
+                    <strong>{p95Value === undefined ? "———" : formatDuration(p95Value)}</strong>
                   </span>
 
                   <div className="status-row-history" role="cell">
-                    <ProbePulse samples={historySamples} label={`${profile.name} ${m.status.availability}`} />
+                    <ProbePulse samples={historySamples} label={`${profile.name} ${m.status.history}`} />
                   </div>
 
                   <span className="status-row-last" role="cell" title={record.error}>
@@ -917,7 +922,7 @@ export function StatusView({
                     disabled={busy || !onApply}
                     onClick={() => onApply?.(profile.id, [...profile.targets])}
                   >
-                    {applying ? <LoaderCircle size={12} className="spin" /> : <Zap size={12} />}
+                    {applying ? <LoaderCircle size={12} className="spin" /> : <Zap size={12} className={current ? "assigned" : undefined} />}
                     {m.keys.assign}
                   </button>
                 </div>

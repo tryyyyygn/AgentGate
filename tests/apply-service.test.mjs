@@ -1588,6 +1588,48 @@ describe("首次使用 Codex（配置里没有 provider）", () => {
     }
   });
 
+  it("停止时把 Codex 交给另一个本地网关并保留外部配置", async () => {
+    const {
+      profileService,
+      gatewayService,
+      gatewayBaselineStore,
+      applyService,
+      codexPath,
+    } = freshHarness();
+    const profile = await freshProfile(profileService);
+    await applyService.assignProfile(profile.id, ["codex"]);
+
+    const external = `model_provider = "ccs"
+model = "gpt-5-codex"
+
+[model_providers.ccs]
+name = "CCS"
+base_url = "http://127.0.0.1:29876/codex/ccs-route-token"
+wire_api = "responses"
+`;
+
+    try {
+      await applyService.startGateway({ port: 0, targets: ["codex"] });
+      await fs.writeFile(codexPath, external, "utf8");
+
+      const stopped = await applyService.stopGateway({
+        targets: ["codex"],
+        preserveResumeIntent: true,
+      });
+
+      expect(stopped.skippedTargets).toEqual(["codex"]);
+      expect(await fs.readFile(codexPath, "utf8")).toBe(external);
+      expect(gatewayService.getPublicState()).toMatchObject({
+        status: "stopped",
+        engaged: [],
+      });
+      expect(gatewayService.getLifecycleState().resumeTargets).toEqual([]);
+      expect((await gatewayBaselineStore.read()).baselines.codex).toBeUndefined();
+    } finally {
+      await gatewayService.stop().catch(() => {});
+    }
+  });
+
   it("恢复官方保留 Codex 登录、用户配置，并清除路由和启动恢复意图", async () => {
     const {
       profileService,

@@ -36,7 +36,7 @@ const {
   StatusView,
   parseStoredProbeRecords,
   parseStoredProbeModels,
-  probeAvailability,
+  probeP95,
   probeCountdownSeconds,
   probeModelOptions,
   probeProfilesTogether,
@@ -53,7 +53,8 @@ const {
   todayCacheRate,
   todayRequestCount,
 } = await import("../src/lib/divergence");
-const { formatTokenCount } = await import("../src/lib/format");
+const { formatTokenCount, formatTokenCountFull } = await import("../src/lib/format");
+const { responseLatencyTier } = await import("../src/lib/health");
 const {
   isCodexGatewayConflict,
   mergeProfileUsage,
@@ -202,6 +203,7 @@ describe("frontend state boundaries", () => {
   it("Token 短格式支持十亿级 B", () => {
     expect(formatTokenCount(1_250_000_000)).toBe("1.25B");
     expect(formatTokenCount(12_500_000_000)).toBe("12.5B");
+    expect(formatTokenCountFull(37_000)).toBe((37_000).toLocaleString());
   });
 
   it("GPT-5.6 的 luna、terra、sol 只给后缀分配语义色类", () => {
@@ -375,7 +377,7 @@ describe("frontend state boundaries", () => {
     expect(html).toContain("Claude Code");
   });
 
-  it("Keyring 把 99% 缓存命中率显示为绿色", () => {
+  it("Keyring 主行不再显示缓存率和一小时统计摘要", () => {
     const cached = {
       ...profile("00000000-0000-4000-8000-000000000003", "Cached", "codex"),
       tokenInputTotal: 100,
@@ -414,8 +416,8 @@ describe("frontend state boundaries", () => {
       }),
     ));
 
-    expect(html).toContain("tier-good");
-    expect(html).toContain("99.0%");
+    expect(html).not.toContain("99.0%");
+    expect(html).not.toContain("1H ");
     expect(html).toContain("ASSIGN");
     expect(html).not.toContain('aria-label="Probe Cached"');
   });
@@ -477,7 +479,19 @@ describe("frontend state boundaries", () => {
     expect(probeState({ ...sample(false, 200), statusCode: 429 })).toBe("unhealthy");
     expect(probeState({ ...sample(false, 200), statusCode: 503 })).toBe("unhealthy");
     expect(probeState(sample(false, 200))).toBe("unhealthy");
-    expect(probeAvailability([sample(true, 200), sample(false, 200), sample(true, 200)])).toBe(67);
+    expect(responseLatencyTier(undefined)).toBe("tier-quiet");
+    expect(responseLatencyTier(4_999)).toBe("tier-good");
+    expect(responseLatencyTier(5_000)).toBe("tier-info");
+    expect(responseLatencyTier(10_000)).toBe("tier-warn");
+    expect(responseLatencyTier(60_000)).toBe("tier-bad");
+    expect(probeP95([sample(true, 200), sample(false, 200), sample(true, 200)])).toBeUndefined();
+    expect(probeP95([
+      sample(true, 100),
+      sample(true, 200),
+      sample(false, 300),
+      sample(true, 400),
+      sample(true, 500),
+    ])).toBe(500);
 
     const history = Array.from({ length: 31 }, (_, index) => ({
       ...sample(index !== 0, 200),
@@ -486,7 +500,7 @@ describe("frontend state boundaries", () => {
     const visible = visibleProbeSamples(history);
     expect(visible).toHaveLength(30);
     expect(visible[0].checkedAt).toBe(history[1].checkedAt);
-    expect(probeAvailability(visible)).toBe(100);
+    expect(probeP95(visible)).toBe(200);
   });
 
   it("状态倒计时按秒显示，手动检测不需要改变固定时钟", () => {
@@ -507,7 +521,7 @@ describe("frontend state boundaries", () => {
     expect(html).toContain('hidden=""');
   });
 
-  it("状态页高亮当前已分配的渠道", () => {
+  it("状态页只在分配按钮标示当前已分配的渠道", () => {
     const current = profile("00000000-0000-4000-8000-000000000041", "Current", "codex");
     const standby = profile("00000000-0000-4000-8000-000000000042", "Standby", "codex");
     const html = renderToStaticMarkup(React.createElement(
@@ -519,8 +533,40 @@ describe("frontend state boundaries", () => {
       }),
     ));
 
-    expect(html).toMatch(/class="status-row [^"]*current/);
-    expect(html).toContain(MESSAGES.en.keys.active);
+    expect(html).not.toMatch(/class="status-row [^"]*current/);
+    expect(html).not.toContain(MESSAGES.en.keys.active);
+    expect(html).toContain("lucide-zap assigned");
+  });
+
+  it("状态页只给 P95 使用延迟色阶，总耗时保持中性", () => {
+    const current = profile("00000000-0000-4000-8000-000000000045", "Latency", "codex");
+    const samples = Array.from({ length: 100 }, (_, index) => ({
+      ok: true,
+      firstByteMs: 80,
+      totalMs: index < 6 ? 60_000 : 5_000,
+      model: "gpt-test",
+      checkedAt: new Date(Date.parse("2026-08-05T10:20:30.000Z") + index * 1_000).toISOString(),
+    }));
+    const previousStorage = window.localStorage;
+    const values = new Map([["agentgate.status.records.v1", JSON.stringify({ [current.id]: { samples } })]]);
+    window.localStorage = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+    };
+
+    try {
+      const html = renderToStaticMarkup(React.createElement(
+        I18nProvider,
+        { locale: "en" },
+        React.createElement(StatusView, { profiles: [current] }),
+      ));
+
+      expect(html).toContain('class="status-row-latency" role="cell"><strong class="tier-info">5.00 s');
+      expect(html).toContain('class="status-row-p95" role="cell"><strong>60.00 s');
+    } finally {
+      if (previousStorage === undefined) delete window.localStorage;
+      else window.localStorage = previousStorage;
+    }
   });
 
   it("状态页提供按客户端配置的故障切换入口和候选密钥库", () => {
@@ -828,6 +874,13 @@ describe("frontend state boundaries", () => {
       checking: false,
       error: undefined,
     });
+    const longSamples = Array.from({ length: 101 }, (_, index) => ({
+      ...sample,
+      checkedAt: new Date(Date.parse(sample.checkedAt) + index * 60_000).toISOString(),
+    }));
+    const truncated = parseStoredProbeRecords(JSON.stringify({ long: { samples: longSamples } }));
+    expect(truncated.long.samples).toHaveLength(100);
+    expect(truncated.long.samples[0].checkedAt).toBe(longSamples[1].checkedAt);
     expect(restored.invalid).toBeUndefined();
   });
 
@@ -875,10 +928,10 @@ describe("frontend state boundaries", () => {
     expect(html).toContain("tint-complete");
   });
 
-  it("流式首 token 和非流式首包都带有准确语义说明", () => {
+  it("动态页只显示首字数值，不重复显示解释性提示", () => {
     const html = renderToStaticMarkup(React.createElement(
       I18nProvider,
-      { locale: "en" },
+      { locale: "zh" },
       React.createElement(ActivityView, {
         requests: [{
           id: "request-hint",
@@ -896,8 +949,104 @@ describe("frontend state boundaries", () => {
       }),
     ));
 
-    expect(html).toContain("First valid reasoning, text, or tool event");
-    expect(html).toContain("FIRST TOKEN");
+    expect(html).toContain("首字 ");
+    expect(html).toContain('class="tier-good">1.00 s</span>');
+    expect(html).not.toContain("request-sub");
+    expect(html).not.toContain("https://api.example/v1/responses");
+    expect(html).not.toContain("First valid reasoning, text, or tool event");
+    expect(html).not.toContain('title="First valid reasoning');
+  });
+
+  it("动态页独立显示推理强度并统一 MAX 文案", () => {
+    const html = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(ActivityView, {
+        requests: [{
+          id: "request-reasoning",
+          client: "codex",
+          profileName: "Reasoning",
+          upstreamUrl: "https://api.example/v1/responses",
+          state: "completed",
+          startedAt: "2026-08-05T10:20:30.000Z",
+          completedAt: "2026-08-05T10:20:31.000Z",
+          durationMs: 1_000,
+          firstTokenLatencyMs: 4_999,
+          reasoningEffort: "max",
+          streaming: true,
+          outcome: "completed",
+          tokenUsage: {
+            inputTokens: 37_000,
+            outputTokens: 2_200,
+            cachedTokens: 35_000,
+            cacheWriteTokens: 1_000,
+            reasoningTokens: 2_100,
+          },
+          receivedBytes: 64,
+        }, {
+          id: "request-ultra",
+          client: "codex",
+          profileName: "Ultra",
+          upstreamUrl: "https://api.example/v1/responses",
+          state: "completed",
+          startedAt: "2026-08-05T10:20:30.000Z",
+          completedAt: "2026-08-05T10:20:31.000Z",
+          durationMs: 1_000,
+          reasoningEffort: "ultra",
+          streaming: false,
+          outcome: "completed",
+          receivedBytes: 64,
+        }],
+      }),
+    ));
+
+    expect(html).toContain('class="request-reasoning"');
+    expect(html).toMatch(/class="request-transport streaming"><strong>STREAM<\/strong>/);
+    expect(html).toMatch(/class="request-transport sync"><strong>SYNC<\/strong>/);
+    expect(html).toContain(">MAX<");
+    expect(html).toContain(">ULTRA<");
+    expect(html).toContain('class="request-time"');
+    expect(html).not.toContain("request-state-label");
+    expect(html).toContain("↓1,000");
+    expect(html).toContain("↑2,200");
+    expect(html).toContain("C 35K");
+    expect(html).toContain("W 1.0K");
+    expect(html).toContain("R 2,100");
+    expect(html).not.toContain("↑2.2K");
+    expect(html).not.toContain("↓37K");
+  });
+
+  it("首字时延按 5 秒、10 秒和 60 秒分级", () => {
+    const request = (id, firstTokenLatencyMs) => ({
+      id,
+      client: "codex",
+      profileName: id,
+      upstreamUrl: "https://api.example/v1/responses",
+      state: "completed",
+      startedAt: new Date().toISOString(),
+      firstTokenLatencyMs,
+      streaming: true,
+      outcome: "completed",
+      receivedBytes: 64,
+    });
+    const html = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(ActivityView, {
+        requests: [
+          request("green", 4_999),
+          request("blue", 5_000),
+          request("yellow", 10_000),
+          request("red", 60_000),
+        ],
+      }),
+    ));
+
+    expect(html).toMatch(/<small>FIRST TOKEN <span class="tier-good">/);
+    expect(html).toMatch(/<small>FIRST TOKEN <span class="tier-info">/);
+    expect(html).toMatch(/<small>FIRST TOKEN <span class="tier-warn">/);
+    expect(html).toMatch(/<small>FIRST TOKEN <span class="tier-bad">/);
+    expect(html).not.toMatch(/<small class="tier-(?:good|info|warn|bad)">/);
   });
 
   it("流式请求等待首内容时不先显示 TTFB 再中途换指标", () => {
@@ -919,9 +1068,10 @@ describe("frontend state boundaries", () => {
       }),
     ));
 
-    expect(html).toContain("TTFT --");
+    expect(html).toContain("FIRST TOKEN ");
+    expect(html).toContain('class="tier-quiet">--</span>');
     expect(html).not.toContain("TTFB");
-    expect(html).not.toContain("TTFT 120 ms");
+    expect(html).not.toContain("FIRST TOKEN 120 ms");
   });
 
   it("用量事件只替换对应方案，不触发全量状态重建", () => {

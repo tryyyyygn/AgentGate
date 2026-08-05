@@ -817,7 +817,9 @@ function createAdapters(paths) {
               && url.hostname === '127.0.0.1'
               && segments[0] === 'codex'
               && segments.length >= 2) {
-              return GATEWAY_OWNERSHIP.CONFLICT
+              return options?.allowExternalGatewayHandoff
+                ? GATEWAY_OWNERSHIP.RELEASED
+                : GATEWAY_OWNERSHIP.CONFLICT
             }
           } catch {
             // A non-URL value is treated as a user release below.

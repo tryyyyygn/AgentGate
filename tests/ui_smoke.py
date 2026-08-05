@@ -287,12 +287,20 @@ with sync_playwright() as playwright:
     stream.get_by_role("heading", name="Stream", exact=True).wait_for()
     assert stream.evaluate("node => getComputedStyle(node).getPropertyValue('--cool').trim().toUpperCase()") == "#1F5F6B"
     assert page.locator(".request-row").count() == 3
+    assert stream.locator(".request-transport").count() == 3
+    assert stream.locator(".request-model small").count() == 0
+    assert stream.locator(".request-reasoning").count() == 3
+    assert stream.locator(".request-time").count() == 3
+    assert stream.locator(".request-state-label").count() == 0
+    assert stream.locator(".request-timing small[title]").count() == 0
+    token_hint = stream.locator(".request-row").first.locator(".tok-detail").get_attribute("data-hint")
+    assert token_hint is not None and "incl. cache" not in token_hint
     assert stream.locator(".request-row").first.evaluate(
         "node => getComputedStyle(node).animationName"
     ) == "none"
     assert "LAST 3 DAYS" in stream.locator(".head-note").inner_text()
     page.get_by_role("radio", name="DONE", exact=True).click()
-    assert page.locator(".request-row .tint-complete").count() == 2
+    assert page.locator(".request-row .tint-complete").count() == 1
     page.screenshot(path=str(OUTPUT_DIR / "activity-complete-1280x800.png"), full_page=False)
     page.get_by_role("radio", name="FAIL", exact=True).click()
     assert page.locator(".request-row").count() == 1
@@ -306,9 +314,12 @@ with sync_playwright() as playwright:
     assert console_text.count("AUTO PROBE") == 1
     assert re.search(r"\b\d{1,3}s\b", console_text), console_text
     assert status.locator(".status-row-action").count() == page.locator(".status-row").count()
-    assert status.locator(".status-row.current").count() == 1
-    assert status.locator(".status-row.current .status-row-name small").inner_text() == "ACTIVE"
-    assert status.locator(".status-row-availability small").count() == 0
+    assert status.locator(".status-row.current").count() == 0
+    assert status.locator(".status-row-availability").count() == 0
+    assert status.locator(".status-row-p95").count() == page.locator(".status-row").count()
+    assert status.locator(".status-row-name small").count() == 0
+    assert status.locator(".status-row-action .assigned").count() == 1
+    assert status.locator(".status-row-latency small").count() == 0
     assert status.locator(".status-row").nth(1).evaluate(
         "node => getComputedStyle(node).backgroundColor"
     ) != status.locator(".status-row").nth(2).evaluate(

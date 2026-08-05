@@ -1202,7 +1202,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 }
 .keyring-open {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 84px 72px 140px 192px;
+  grid-template-columns: 28px minmax(0, 1fr) 84px 140px 192px;
   gap: 12px;
   align-items: center;
   min-width: 0;
@@ -1323,18 +1323,6 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .keyring-stat strong.warn { color: var(--warn); }
 .keyring-stat strong.bad { color: var(--bad); }
 .keyring-stat strong.unknown { color: var(--ink-quiet); }
-.keyring-stat small {
-  display: block;
-  overflow: hidden;
-  margin-top: 2px;
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  letter-spacing: .1em;
-  color: var(--ink-quiet);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .keyring-tools { display: flex; align-items: center; justify-content: flex-end; gap: 2px; width: 122px; }
 .keyring-tools > svg { color: var(--ink-quiet); }
 .keyring-assign { height: 26px; padding: 0 8px; font-size: var(--fs-label); }
@@ -1552,7 +1540,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .status-table-head > span:first-child { text-align: center; }
 .status-row {
   --status-tone: var(--ink-quiet);
-  min-height: 62px;
+  min-height: 52px;
   padding: 7px 10px;
   border-bottom: 1px solid var(--line);
   transition: background 140ms ease;
@@ -1560,11 +1548,6 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .status-row:last-child { border-bottom: 0; }
 .status-row:nth-child(even) { background: var(--soft); }
 .status-row:hover { background: var(--soft); }
-.status-row.current {
-  background: var(--accent-soft);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-.status-row.current:hover { background: var(--accent-soft); }
 .status-row.healthy { --status-tone: var(--good); }
 .status-row.smooth { --status-tone: var(--cool); }
 .status-row.limited { --status-tone: var(--warn); }
@@ -1594,11 +1577,6 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   color: var(--status-tone);
   border: 1px solid currentColor;
 }
-.status-row-mark.current {
-  color: var(--accent-ink);
-  background: var(--accent-soft);
-  border-color: var(--accent);
-}
 .status-row-name { min-width: 0; }
 .status-row-name strong,
 .status-row-model,
@@ -1612,18 +1590,6 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   color: var(--ink);
   font-size: var(--fs-sm);
   font-weight: 600;
-}
-.status-row-name small {
-  display: inline-block;
-  margin-top: 2px;
-  padding: 1px 4px;
-  color: var(--accent-ink);
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-edge);
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  font-weight: 600;
-  letter-spacing: .08em;
 }
 .status-row-model-cell { min-width: 0; }
 .status-row-model {
@@ -1651,21 +1617,21 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   gap: 5px;
   min-width: 0;
   color: var(--status-tone);
-  font-family: var(--mono);
+  font-family: var(--serif);
   font-size: var(--fs-label);
   font-weight: 600;
   white-space: nowrap;
 }
 .status-row-state.disabled { color: var(--ink-quiet); }
 .status-row-latency,
-.status-row-availability {
+.status-row-p95 {
   display: grid;
   min-width: 0;
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
 }
 .status-row-latency strong,
-.status-row-availability strong {
+.status-row-p95 strong {
   overflow: hidden;
   color: var(--ink);
   font-size: var(--fs-sm);
@@ -1673,19 +1639,10 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.status-row-latency small,
-.status-row-availability small {
-  margin-top: 1px;
-  overflow: hidden;
-  color: var(--ink-quiet);
-  font-size: var(--fs-label);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.status-row-availability.healthy strong { color: var(--good); }
-.status-row-availability.smooth strong { color: var(--cool); }
-.status-row-availability.limited strong { color: var(--warn); }
-.status-row-availability.unhealthy strong { color: var(--bad); }
+.status-row-latency strong.tier-good { color: var(--good); }
+.status-row-latency strong.tier-info { color: var(--cool); }
+.status-row-latency strong.tier-warn { color: var(--warn); }
+.status-row-latency strong.tier-bad { color: var(--bad); }
 .status-row-history { min-width: 0; }
 .status-pulse {
   display: grid;
@@ -1721,6 +1678,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   padding: 0 7px;
   font-size: var(--fs-label);
 }
+.status-row-action .assigned { color: var(--accent-ink); }
 
 /* ---------- 钱包 ---------- */
 .wallet-inner { max-width: 1080px; }
@@ -1946,8 +1904,8 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 
 .request-row {
   display: grid;
-  /* Token 列要一行装下 C/W/R 三个读数，宽度从模型列匀过来——那列本来就一堆空位 */
-  grid-template-columns: 20px minmax(128px, 1fr) minmax(92px, .62fr) minmax(172px, .95fr) 62px 88px 72px;
+  /* 传输模式和推理强度独立成列，Token 列保持 C/W/R 三个读数不换行。 */
+  grid-template-columns: 20px minmax(128px, 1fr) 58px minmax(92px, .62fr) 66px minmax(158px, .88fr) 62px 88px 96px;
   gap: 11px;
   align-items: center;
   min-height: 56px;
@@ -1988,16 +1946,6 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   letter-spacing: .08em;
   white-space: nowrap;
 }
-.request-sub {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  margin-top: 2px;
-  font-family: var(--mono);
-  font-size: var(--fs-xs);
-  color: var(--ink-quiet);
-}
 .request-model { min-width: 0; }
 .request-model code {
   display: block;
@@ -2008,13 +1956,28 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   font-size: var(--fs-sm);
   color: var(--ink);
 }
-.request-model small {
+.request-transport { min-width: 0; white-space: nowrap; }
+.request-transport strong {
   display: block;
-  margin-top: 2px;
+  overflow: hidden;
+  color: var(--ink-quiet);
   font-family: var(--mono);
   font-size: var(--fs-xs);
-  letter-spacing: .06em;
-  color: var(--ink-quiet);
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+.request-transport.streaming strong { color: var(--good); }
+.request-transport.sync strong { color: var(--ink-quiet); }
+.request-reasoning { min-width: 0; text-align: left; white-space: nowrap; }
+.request-reasoning strong {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-overflow: ellipsis;
 }
 .request-tokens { min-width: 0; white-space: nowrap; font-family: var(--mono); }
 .request-tokens .tok-io { display: flex; gap: 7px; }
@@ -2068,13 +2031,18 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   font-size: var(--fs-xs);
   color: var(--ink-quiet);
 }
-.request-state-label {
+.request-timing small .tier-good { color: var(--good); }
+.request-timing small .tier-info { color: var(--cool); }
+.request-timing small .tier-warn { color: var(--warn); }
+.request-timing small .tier-bad { color: var(--bad); }
+.request-time {
   text-align: right;
   white-space: nowrap;
+  padding-right: 8px;
+  color: var(--ink-quiet);
   font-family: var(--mono);
   font-size: var(--fs-xs);
-  font-weight: 600;
-  letter-spacing: .08em;
+  font-variant-numeric: tabular-nums;
 }
 
 .feed-empty {
@@ -3677,7 +3645,7 @@ body.rail-dragging .rail-thumb { cursor: grabbing; }
 
   .keyring-head { gap: 8px; }
   .keyring-open {
-    grid-template-columns: 28px minmax(90px, 1fr) 72px 64px minmax(90px, 120px) minmax(104px, 140px);
+    grid-template-columns: 28px minmax(90px, 1fr) 72px minmax(90px, 120px) minmax(104px, 140px);
     gap: 8px;
   }
   .keyring-detail {
@@ -3729,22 +3697,20 @@ body.rail-dragging .rail-thumb { cursor: grabbing; }
   .client-route-summary { display: grid; gap: 10px; }
   .client-route-summary-state { justify-self: start; text-align: left; }
   .keyring-open {
-    grid-template-columns: 28px minmax(0, 1fr) 72px 72px;
+    grid-template-columns: 28px minmax(0, 1fr) 72px;
     grid-template-areas:
-      "glyph name tokens cache"
-      "glyph health health status";
+      "glyph name tokens"
+      "glyph health status";
     row-gap: 4px;
   }
   .keyring-open > .keyring-glyph { grid-area: glyph; }
   .keyring-open > .keyring-name { grid-area: name; }
   .keyring-open > .keyring-usage:nth-of-type(3) { grid-area: tokens; }
-  .keyring-open > .keyring-usage:nth-of-type(4) { grid-area: cache; }
   .keyring-open > .health-bars {
     grid-area: health;
     max-width: none;
   }
   .keyring-open > .keyring-stat { grid-area: status; }
-  .keyring-stat small { display: none; }
   .keyring-detail {
     grid-template-columns: minmax(0, 1fr);
     padding-left: 36px;
