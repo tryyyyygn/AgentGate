@@ -6,8 +6,8 @@
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [English](README.en.md)
 
-[![Release](https://img.shields.io/github/v/release/trygn35-ui/agentgate?style=flat-square)](https://github.com/trygn35-ui/agentgate/releases/latest)
-[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftrygn35-ui%2Fagentgate%2Fmain%2Fdocs%2Fdownload-count.json&style=flat-square)](https://github.com/trygn35-ui/agentgate/releases)
+[![Release](https://img.shields.io/github/v/release/tryyyyyygn/AgentGate?style=flat-square)](https://github.com/tryyyyyygn/AgentGate/releases/latest)
+[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftryyyyyygn%2FAgentGate%2Fmain%2Fdocs%2Fdownload-count.json&style=flat-square)](https://github.com/tryyyyyygn/AgentGate/releases)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2F78D0?style=flat-square)](#下載)
 [![License](https://img.shields.io/badge/license-Community%20Use-FF9100?style=flat-square)](LICENSE)
 
@@ -40,10 +40,13 @@ Agent;Gate 把這些工作收進一個本機 Windows App：
 | --- | --- | --- |
 | Codex | 穩定 | OpenAI Responses、Chat Completions |
 | Claude Code | 實驗性 | Anthropic Messages |
+| Claude Code 桌面版 | 實驗性 | Anthropic Messages（支援模型映射） |
 | OpenCode | 實驗性 | Anthropic、OpenAI、Gemini |
 | Gemini CLI | 實驗性 | Gemini |
 
 「實驗性」表示 Client 的設定格式仍可能變動。Agent;Gate 只會修改自己負責的欄位，解除接管時也會還原；Client 大版本更新後仍建議先檢查一次設定。
+
+Claude Code 的 CLI 與桌面版是兩個獨立的 Client 目標，可分別接管、指派不同方案。方案的「模型映射」可以把用戶端送來的模型改寫成上游模型——例如把 Claude 桌面版的 `claude-sonnet-5` 等檔位全部映射到 Kimi For Coding 的 `k3`；新建方案時可直接選用 Kimi 預設範本。
 
 ## 錢包與 Key 群組
 
@@ -66,7 +69,7 @@ Agent;Gate 把這些工作收進一個本機 Windows App：
 
 ## 下載
 
-到 [Releases](https://github.com/trygn35-ui/agentgate/releases/latest) 取得最新版：
+到 [Releases](https://github.com/tryyyyyygn/AgentGate/releases/latest) 取得最新版：
 
 | 檔案 | 用途 |
 | --- | --- |

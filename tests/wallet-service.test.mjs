@@ -328,7 +328,7 @@ describe("独立钱包服务", () => {
         apiKey: "sk-sub2api-claude",
         model: "",
         authMode: "bearer",
-        targets: ["claude"],
+        targets: ["claude", "claude-desktop"],
       }, {
         name: "Codex 组",
         protocol: "openai-responses",

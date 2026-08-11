@@ -42,6 +42,18 @@ function utf8Suffix(text, maxBytes) {
   return { text: text.slice(index), bytes }
 }
 
+const TransportTimingSchema = z.object({
+  clientRequestBytes: z.number().int().nonnegative().optional(),
+  clientRequestBodyCompletedAtMs: z.number().int().nonnegative().optional(),
+  upstreamRequestBytes: z.number().int().nonnegative().optional(),
+  upstreamRequestContentEncoding: z.string().max(64).optional(),
+  upstreamRequestFinishedAtMs: z.number().int().nonnegative().optional(),
+  upstreamResponseHeadersAtMs: z.number().int().nonnegative().optional(),
+  upstreamResponseContentEncoding: z.string().max(64).optional(),
+  upstreamFirstByteAtMs: z.number().int().nonnegative().optional(),
+  upstreamResponseEndedAtMs: z.number().int().nonnegative().optional(),
+})
+
 const RequestLogEntrySchema = z.object({
   id: z.string(),
   client: z.string(),
@@ -56,11 +68,15 @@ const RequestLogEntrySchema = z.object({
   durationMs: z.number().optional(),
   firstTokenLatencyMs: z.number().optional(),
   firstByteLatencyMs: z.number().optional(),
+  upstreamHttpVersion: z.string().optional(),
   statusCode: z.number().optional(),
   model: z.string().optional(),
+  /** 命中模型映射后实际发往上游的模型；未映射时缺省。 */
+  upstreamModel: z.string().optional(),
   reasoningEffort: z.string().optional(),
   streaming: z.boolean().optional(),
   outcome: z.string().optional(),
+  transport: TransportTimingSchema.optional(),
   tokenUsage: z.object({
     inputTokens: z.number().optional(),
     outputTokens: z.number().optional(),
@@ -91,42 +107,6 @@ function nonEmptyText(value) {
   ))
 }
 
-const OPENAI_VISIBLE_CONTENT_TYPES = new Set(['output_text', 'refusal', 'text'])
-const OPENAI_REASONING_CONTENT_TYPES = new Set(['reasoning_text', 'summary_text'])
-
-function isOpenAiVisibleContent(value) {
-  if (typeof value === 'string') return nonEmptyText(value)
-  if (Array.isArray(value)) return value.some(isOpenAiVisibleContent)
-  if (!value || typeof value !== 'object') return false
-  if (value.type && !OPENAI_VISIBLE_CONTENT_TYPES.has(value.type)) return false
-  return nonEmptyText(value.text) || nonEmptyText(value.refusal)
-}
-
-function isOpenAiVisibleOutput(value) {
-  if (!value || typeof value !== 'object') return false
-  if (value.type && value.type !== 'message'
-    && !OPENAI_VISIBLE_CONTENT_TYPES.has(value.type)) return false
-  return nonEmptyText(value.output_text)
-    || nonEmptyText(value.text)
-    || nonEmptyText(value.refusal)
-    || isOpenAiVisibleContent(value.content)
-}
-
-function isOpenAiReasoningContent(value) {
-  if (typeof value === 'string') return nonEmptyText(value)
-  if (Array.isArray(value)) return value.some(isOpenAiReasoningContent)
-  if (!value || typeof value !== 'object') return false
-  if (value.type && !OPENAI_REASONING_CONTENT_TYPES.has(value.type)) return false
-  return nonEmptyText(value.text)
-}
-
-function isOpenAiGeneratedOutput(value) {
-  if (isOpenAiVisibleOutput(value)) return true
-  if (!value || typeof value !== 'object' || value.type !== 'reasoning') return false
-  return isOpenAiReasoningContent(value.summary)
-    || isOpenAiReasoningContent(value.content)
-}
-
 function isAnthropicVisibleContent(value) {
   return Boolean(
     value
@@ -148,56 +128,14 @@ function isAnthropicGeneratedContent(value) {
 function isFirstTokenPayload(protocol, payload, eventName = '') {
   if (!payload || typeof payload !== 'object') return false
   if (protocol === 'openai-responses') {
-    const textEventTypes = [
-      'response.output_text.delta',
-      'response.output_text.done',
-      'response.refusal.delta',
-      'response.refusal.done',
-    ]
-    const reasoningEventTypes = [
-      'response.reasoning_summary_text.delta',
-      'response.reasoning_summary_text.done',
-    ]
-    const toolArgumentEventTypes = [
-      'response.function_call_arguments.delta',
-      'response.function_call_arguments.done',
-    ]
-    if (textEventTypes.includes(eventName) || textEventTypes.includes(payload.type)) {
-      return nonEmptyText(payload.delta)
-        || nonEmptyText(payload.text)
-        || nonEmptyText(payload.refusal)
-    }
-    if (reasoningEventTypes.includes(eventName) || reasoningEventTypes.includes(payload.type)) {
-      return nonEmptyText(payload.delta) || nonEmptyText(payload.text)
-    }
-    if (toolArgumentEventTypes.includes(eventName)
-      || toolArgumentEventTypes.includes(payload.type)) {
-      return nonEmptyText(payload.delta) || nonEmptyText(payload.arguments)
-    }
-    const reasoningPartEventTypes = [
-      'response.reasoning_summary_part.added',
-      'response.reasoning_summary_part.done',
-    ]
-    if (reasoningPartEventTypes.includes(eventName)
-      || reasoningPartEventTypes.includes(payload.type)) {
-      return isOpenAiReasoningContent(payload.part)
-    }
-    const contentPartTypes = ['response.content_part.added', 'response.content_part.done']
-    if (contentPartTypes.includes(eventName) || contentPartTypes.includes(payload.type)) {
-      return isOpenAiVisibleContent(payload.part) || isOpenAiReasoningContent(payload.part)
-    }
-    const outputItemTypes = ['response.output_item.added', 'response.output_item.done']
-    if (outputItemTypes.includes(eventName) || outputItemTypes.includes(payload.type)) {
-      if ((eventName === 'response.output_item.added'
-        || payload.type === 'response.output_item.added')
-        && (payload.item?.type === 'reasoning'
-          || payload.item?.type === 'function_call')) return true
-      return isOpenAiGeneratedOutput(payload.item)
-    }
-    const response = payload.response || payload
-    return nonEmptyText(response.output_text)
-      || isOpenAiVisibleContent(response.content)
-      || (Array.isArray(response.output) && response.output.some(isOpenAiGeneratedOutput))
+    // 与 Sub2API 的首字口径一致：除 Responses 前导/失败事件外，首个非空
+    // SSE data 事件即代表上游开始输出，包括 content 仍为空的 output_item.added。
+    const responseEventType = typeof eventName === 'string' && eventName.trim()
+      ? eventName.trim()
+      : typeof payload.type === 'string' ? payload.type.trim() : ''
+    return responseEventType !== 'response.created'
+      && responseEventType !== 'response.in_progress'
+      && responseEventType !== 'response.failed'
   }
   if (protocol === 'openai-chat') {
     return Array.isArray(payload.choices) && payload.choices.some((choice) => {
@@ -783,8 +721,11 @@ function toPublicRequest(entry) {
     ...(entry.firstByteLatencyMs !== undefined
       ? { firstByteLatencyMs: entry.firstByteLatencyMs }
       : {}),
+    ...(entry.upstreamHttpVersion ? { upstreamHttpVersion: entry.upstreamHttpVersion } : {}),
+    ...(entry.transport ? { transport: { ...entry.transport } } : {}),
     ...(entry.statusCode !== undefined ? { statusCode: entry.statusCode } : {}),
     ...(entry.model ? { model: entry.model } : {}),
+    ...(entry.upstreamModel ? { upstreamModel: entry.upstreamModel } : {}),
     ...(entry.reasoningEffort ? { reasoningEffort: entry.reasoningEffort } : {}),
     ...(entry.streaming !== undefined ? { streaming: entry.streaming } : {}),
     ...(entry.outcome ? { outcome: entry.outcome } : {}),
@@ -941,6 +882,7 @@ class RequestMonitorService {
       state: 'connecting',
       startedAt: new Date(startedAtMs).toISOString(),
       startedAtMs,
+      upstreamHttpVersion: input.upstreamHttpVersion,
       receivedBytes: 0,
       model: input.model,
       reasoningEffort: input.reasoningEffort,
@@ -960,10 +902,18 @@ class RequestMonitorService {
     if (typeof patch.keyHint === 'string' && patch.keyHint.trim()) entry.keyHint = patch.keyHint.trim()
     if (typeof patch.upstreamUrl === 'string') entry.upstreamUrl = patch.upstreamUrl
     if (typeof patch.protocol === 'string' && patch.protocol.trim()) entry.protocol = patch.protocol.trim()
+    if (typeof patch.upstreamHttpVersion === 'string' && patch.upstreamHttpVersion.trim()) {
+      entry.upstreamHttpVersion = patch.upstreamHttpVersion.trim()
+    }
     if (typeof patch.model === 'string'
       && patch.model.trim()
       && patch.model.trim().length <= MAX_MODEL_METADATA_LENGTH) {
       entry.model = patch.model.trim()
+    }
+    if (typeof patch.upstreamModel === 'string'
+      && patch.upstreamModel.trim()
+      && patch.upstreamModel.trim().length <= MAX_MODEL_METADATA_LENGTH) {
+      entry.upstreamModel = patch.upstreamModel.trim()
     }
     if (typeof patch.reasoningEffort === 'string' && patch.reasoningEffort.trim()) {
       const reasoningEffort = patch.reasoningEffort.trim()
@@ -976,6 +926,45 @@ class RequestMonitorService {
     }
     if (patch.tokenUsage) entry.tokenUsage = mergeUsage(entry.tokenUsage, patch.tokenUsage)
     this._notifyChanged([entry])
+    return true
+  }
+
+  /**
+   * 仅供诊断的传输阶段数据；不含正文、鉴权或地址等敏感内容，也不在热路径发 UI 更新。
+   */
+  recordTransport(id, patch = {}) {
+    const entry = this.active.get(id)
+    if (!entry) return false
+    const next = {}
+    for (const field of [
+      'clientRequestBytes',
+      'clientRequestBodyCompletedAtMs',
+      'upstreamRequestBytes',
+      'upstreamRequestFinishedAtMs',
+      'upstreamResponseHeadersAtMs',
+      'upstreamFirstByteAtMs',
+      'upstreamResponseEndedAtMs',
+    ]) {
+      if (Number.isInteger(patch[field]) && patch[field] >= 0) next[field] = patch[field]
+    }
+    for (const field of ['upstreamRequestContentEncoding', 'upstreamResponseContentEncoding']) {
+      if (typeof patch[field] === 'string' && patch[field].length <= 64) {
+        next[field] = patch[field]
+      }
+    }
+    if (Object.keys(next).length === 0) return false
+    entry.transport = { ...entry.transport, ...next }
+    return true
+  }
+
+  upstreamRequestStarted(id) {
+    const entry = this.active.get(id)
+    if (!entry
+      || entry.firstByteLatencyMs !== undefined
+      || entry.measurementStartedAtMs !== undefined) {
+      return false
+    }
+    entry.measurementStartedAtMs = this.now()
     return true
   }
 
@@ -1009,7 +998,10 @@ class RequestMonitorService {
     entry.lastChunkAtMs = receivedAtMs
     entry.receivedBytes += bytes.byteLength
     if (entry.firstByteLatencyMs === undefined) {
-      entry.firstByteLatencyMs = Math.max(0, receivedAtMs - entry.startedAtMs)
+      entry.firstByteLatencyMs = Math.max(
+        0,
+        receivedAtMs - (entry.measurementStartedAtMs ?? entry.startedAtMs),
+      )
       if (entry.streaming === false) entry.state = 'streaming'
       this._notifyChanged([entry])
     }
@@ -1031,7 +1023,8 @@ class RequestMonitorService {
       if (usage) entry.tokenUsage = mergeUsage(entry.tokenUsage, usage)
       if (entry.firstTokenLatencyMs !== undefined) continue
       const metadata = extractRequestMetadata(payload?.response || payload)
-      if (metadata.model) entry.model = metadata.model
+      // 映射过的请求：响应里的模型就是 upstreamModel，别用它覆盖客户端请求的模型。
+      if (metadata.model && !entry.upstreamModel) entry.model = metadata.model
       if (entry.streaming === true && isFirstTokenPayload(entry.protocol, payload, eventName)) {
         this._markFirstToken(entry, receivedAtMs)
         marked = true
@@ -1048,14 +1041,22 @@ class RequestMonitorService {
     this.active.delete(id)
     // 收尾：残留的半行、没闭合的块，还有非 SSE 正文——被换行拆开的正文行行都解析
     // 不出来，只能从尾巴里把 usage 捞出来（它通常就在 JSON 末尾）。
-    this._absorb(entry, entry.scanner.end(), entry.lastChunkAtMs ?? entry.startedAtMs)
+    this._absorb(
+      entry,
+      entry.scanner.end(),
+      entry.lastChunkAtMs ?? entry.measurementStartedAtMs ?? entry.startedAtMs,
+    )
     if (entry.tokenUsage === undefined) {
       const usage = extractTokenUsageFromSource(entry.scanner.tailSource())
       if (usage) entry.tokenUsage = mergeUsage(entry.tokenUsage, usage)
     }
     const completedAtMs = this.now()
     entry.completedAt = new Date(completedAtMs).toISOString()
-    entry.durationMs = Math.max(0, completedAtMs - entry.startedAtMs)
+    // 首字用上游写完作为对齐点；总耗时必须覆盖客户端请求的完整生命周期。
+    entry.durationMs = Math.max(
+      0,
+      completedAtMs - entry.startedAtMs,
+    )
     // 流里已出现协议级完成标记时，socket 层的中止只是客户端提前收尾，不改判为中止。
     const effectiveOutcome = outcome === 'aborted' && entry.sawCompletion ? undefined : outcome
     entry.outcome = effectiveOutcome || (
@@ -1089,7 +1090,10 @@ class RequestMonitorService {
   }
 
   _markFirstToken(entry, receivedAtMs) {
-    entry.firstTokenLatencyMs = Math.max(0, receivedAtMs - entry.startedAtMs)
+    entry.firstTokenLatencyMs = Math.max(
+      0,
+      receivedAtMs - (entry.measurementStartedAtMs ?? entry.startedAtMs),
+    )
     entry.state = 'streaming'
     // 告诉扫描器：可以只盯 usage 了，别再解析每一个增量
     entry.scanner.settled = true

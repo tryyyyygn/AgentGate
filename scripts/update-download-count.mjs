@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const repository = process.env.GITHUB_REPOSITORY ?? "trygn35-ui/agentgate";
+const repository = process.env.GITHUB_REPOSITORY ?? "tryyyyyygn/AgentGate";
 const outputPath = path.resolve(
   process.env.DOWNLOAD_COUNT_FILE ?? "docs/download-count.json",
 );

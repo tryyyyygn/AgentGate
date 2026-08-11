@@ -12,6 +12,7 @@ const {
 const { ActivityView } = await import("../src/components/ActivityView");
 const { ModelName } = await import("../src/components/ModelName");
 const { OverviewView } = await import("../src/components/OverviewView");
+const { ProfileEditor } = await import("../src/components/ProfileEditor");
 const { ClientRouteSettings, failoverDraftChanged } = await import("../src/components/ClientRouteSettings");
 const { Toast } = await import("../src/components/Toast");
 const {
@@ -85,6 +86,7 @@ function profile(id, name, target, latency = 100) {
     targets: [target],
     enableToolSearch: false,
     autoSwitch: { enabled: false, intervalMinutes: 2 },
+    routing: { enabled: true, enabledModels: [], weight: 0, autoDisableOnFailure: false },
     createdAt: checkedAt,
     updatedAt: checkedAt,
   };
@@ -139,6 +141,43 @@ describe("frontend state boundaries", () => {
     expect(BLANK_PROFILE_INPUT.protocol).toBe("openai-responses");
     expect(BLANK_PROFILE_INPUT.targets).toEqual(["codex"]);
     expect(BLANK_PROFILE_INPUT.enableToolSearch).toBe(false);
+  });
+
+  it("新建方案提供 Kimi 预设，已有方案渲染映射行", () => {
+    const createHtml = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "zh" },
+      React.createElement(ProfileEditor, {
+        groups: [],
+        busy: false,
+        onClose: vi.fn(),
+        onSave: vi.fn(),
+      }),
+    ));
+    expect(createHtml).toContain("Kimi For Coding");
+    expect(createHtml).toContain(MESSAGES.zh.editor.modelRoutes);
+
+    const editHtml = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      { locale: "zh" },
+      React.createElement(ProfileEditor, {
+        profile: {
+          ...profile("00000000-0000-4000-8000-0000000000f1", "Kimi", "claude"),
+          protocol: "anthropic",
+          model: "k3",
+          modelRoutes: {
+            "claude-sonnet-5": { model: "k3", labelOverride: "k3", supports1m: true },
+          },
+        },
+        groups: [],
+        busy: false,
+        onClose: vi.fn(),
+        onSave: vi.fn(),
+      }),
+    ));
+    expect(editHtml).toContain("claude-sonnet-5");
+    expect(editHtml).toContain("k3");
+    expect(editHtml).not.toContain("preset-chip");
   });
 
   it("只用实际 engaged 的路由计算分歧率", () => {
@@ -303,6 +342,7 @@ describe("frontend state boundaries", () => {
           startGatewayOnLaunch: true,
           theme: "system",
           language: "en",
+          routing: { mode: "assignment", strategy: "fixed" },
         },
         busy: false,
         update: { state: "downloading", currentVersion: "1.6.4", portable: false, percent: 42 },
@@ -388,6 +428,7 @@ describe("frontend state boundaries", () => {
       { locale: "en" },
       React.createElement(KeyringView, {
         profiles: [cached],
+        routingMode: "assignment",
         gateway: {
           status: "stopped",
           host: "127.0.0.1",
@@ -538,6 +579,36 @@ describe("frontend state boundaries", () => {
     expect(html).toContain("lucide-zap assigned");
   });
 
+  it("状态页把不检测的渠道稳定放到检测渠道之后", () => {
+    const first = profile("00000000-0000-4000-8000-000000000046", "First", "codex");
+    const second = profile("00000000-0000-4000-8000-000000000047", "Second", "codex");
+    const third = profile("00000000-0000-4000-8000-000000000048", "Third", "codex");
+    const fourth = profile("00000000-0000-4000-8000-000000000049", "Fourth", "codex");
+    const previousStorage = window.localStorage;
+    const values = new Map([
+      ["agentgate.status.disabled-profiles.v1", JSON.stringify([second.id, fourth.id])],
+    ]);
+    window.localStorage = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+    };
+
+    try {
+      const html = renderToStaticMarkup(React.createElement(
+        I18nProvider,
+        { locale: "en" },
+        React.createElement(StatusView, { profiles: [first, second, third, fourth] }),
+      ));
+      const names = [...html.matchAll(/status-row-name"><strong>([^<]+)<\/strong>/g)]
+        .map((match) => match[1]);
+
+      expect(names).toEqual(["First", "Third", "Second", "Fourth"]);
+    } finally {
+      if (previousStorage === undefined) delete window.localStorage;
+      else window.localStorage = previousStorage;
+    }
+  });
+
   it("状态页只给 P95 使用延迟色阶，总耗时保持中性", () => {
     const current = profile("00000000-0000-4000-8000-000000000045", "Latency", "codex");
     const samples = Array.from({ length: 100 }, (_, index) => ({
@@ -569,41 +640,20 @@ describe("frontend state boundaries", () => {
     }
   });
 
-  it("状态页提供按客户端配置的故障切换入口和候选密钥库", () => {
+  it("状态页不重复提供故障切换配置入口", () => {
     const current = profile("00000000-0000-4000-8000-000000000043", "Current", "codex");
-    const standby = profile("00000000-0000-4000-8000-000000000044", "Standby", "codex");
     const statusHtml = renderToStaticMarkup(React.createElement(
       I18nProvider,
       { locale: "zh" },
       React.createElement(StatusView, {
-        profiles: [current, standby],
+        profiles: [current],
         settings: DEFAULT_SETTINGS,
         onSettingsChange: vi.fn(),
       }),
     ));
-    const dialogHtml = renderToStaticMarkup(React.createElement(
-      I18nProvider,
-      { locale: "zh" },
-      React.createElement(FailoverDialog, {
-        profiles: [current, standby],
-        gateway: { routes: [{ target: "codex", profileId: current.id }] },
-        settings: DEFAULT_SETTINGS,
-        busy: false,
-        onSave: vi.fn(),
-        onClose: vi.fn(),
-      }),
-    ));
 
-    expect(statusHtml).toContain(MESSAGES.zh.status.failover);
-    expect(statusHtml).toContain('aria-haspopup="dialog"');
-    expect(dialogHtml).toContain(MESSAGES.zh.status.failoverTitle);
-    expect(dialogHtml).toContain("Claude Code");
-    expect(dialogHtml).toContain("Codex");
-    expect(dialogHtml).toContain("OpenCode");
-    expect(dialogHtml).toContain("Gemini CLI");
-    expect(dialogHtml).toContain("Current");
-    expect(dialogHtml).toContain("Standby");
-    expect(dialogHtml.match(/class="switch-input"/g)).toHaveLength(4);
+    expect(statusHtml).not.toContain(MESSAGES.zh.status.failover);
+    expect(statusHtml).not.toContain('aria-haspopup="dialog"');
   });
 
   it("故障切换弹窗展示自动择优的失败计数、冷却和候选排除摘要，而状态页不重复占位", () => {
@@ -751,10 +801,10 @@ describe("frontend state boundaries", () => {
       }),
     ));
 
-    expect(html.match(/EXPERIMENTAL/g)).toHaveLength(3);
+    expect(html.match(/EXPERIMENTAL/g)).toHaveLength(4);
     expect(html).not.toMatch(/CODEX[^<]*EXPERIMENTAL/);
     expect(html).toContain(MESSAGES.en.overview.restoreOfficial);
-    expect(html.match(/SELECT KEY/g)).toHaveLength(3);
+    expect(html.match(/SELECT KEY/g)).toHaveLength(4);
   });
 
   it("客户端设置入口只展示当前客户端兼容的候选库", () => {

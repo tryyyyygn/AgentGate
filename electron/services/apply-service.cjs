@@ -17,7 +17,7 @@ const {
   readTextSnapshot,
   restoreSnapshot,
 } = require('./config-utils.cjs')
-const { GATEWAY_OWNERSHIP } = require('./adapters.cjs')
+const { CLAUDE_DESKTOP_STATE_KEYS, GATEWAY_OWNERSHIP } = require('./adapters.cjs')
 
 const IdSchema = z.string().uuid()
 const TargetsSchema = z.array(z.enum(TARGETS)).max(TARGETS.length)
@@ -27,7 +27,7 @@ const ExpectedHashesSchema = z.record(z.string().regex(/^[0-9a-f]{64}$/i))
 const HISTORY_LIMIT = 100
 const FAILURE_MESSAGE_LIMIT = 240
 const GATEWAY_RECOVERY_ATTEMPTS = 3
-const GATEWAY_BASELINE_VERSION = 2
+const GATEWAY_BASELINE_VERSION = 3
 const GATEWAY_CONTRACT_VERSION = 2
 
 const GatewayBaselineEntrySchema = z.object({
@@ -45,6 +45,13 @@ const CurrentGatewayBaselineStoreSchema = z.object({
 const GatewayBaselineStoreSchema = z.union([
   CurrentGatewayBaselineStoreSchema,
   z.object({
+    version: z.literal(2),
+    baselines: z.record(z.enum(TARGETS), GatewayBaselineEntrySchema),
+  }).transform((value) => ({
+    version: GATEWAY_BASELINE_VERSION,
+    baselines: value.baselines,
+  })),
+  z.object({
     version: z.literal(1),
     baselines: z.record(z.enum(TARGETS), GatewayBaselineEntrySchema),
   }).transform((value) => ({
@@ -59,7 +66,7 @@ function defaultGatewayBaselineStore() {
 
 function compatibleWithTarget(profile, target) {
   const compatible = {
-    [PROTOCOL.ANTHROPIC]: [TARGET.CLAUDE, TARGET.OPENCODE],
+    [PROTOCOL.ANTHROPIC]: [TARGET.CLAUDE, TARGET.CLAUDE_DESKTOP, TARGET.OPENCODE],
     [PROTOCOL.OPENAI_RESPONSES]: [TARGET.CODEX, TARGET.OPENCODE],
     [PROTOCOL.OPENAI_CHAT]: [TARGET.CODEX, TARGET.OPENCODE],
     [PROTOCOL.GEMINI]: [TARGET.GEMINI, TARGET.OPENCODE],
@@ -78,12 +85,27 @@ function assertCodexGatewayProtocol(profile, baseline) {
   }
 }
 
+function modelRoutesContract(routes) {
+  if (!routes || typeof routes !== 'object') return {}
+  return Object.fromEntries(Object.entries(routes)
+    .filter(([, route]) => route && typeof route.model === 'string')
+    .map(([from, route]) => [from, {
+      model: route.model,
+      ...(route.labelOverride ? { labelOverride: route.labelOverride } : {}),
+      ...(route.supports1m !== undefined ? { supports1m: Boolean(route.supports1m) } : {}),
+    }]))
+}
+
 function clientContract(profile, target) {
   return JSON.stringify({
     protocol: profile.protocol,
     model: profile.model || '',
     ...(target === TARGET.CLAUDE
       ? { enableToolSearch: Boolean(profile.enableToolSearch) }
+      : {}),
+    // 桌面客户端配置直接由映射表生成，映射变化必须重写已接管的条目。
+    ...(target === TARGET.CLAUDE_DESKTOP
+      ? { modelRoutes: modelRoutesContract(profile.modelRoutes) }
       : {}),
   })
 }
@@ -197,6 +219,61 @@ class ApplyService {
   }
 
   /**
+   * 读取网关基线库，并把拆分前 claude 基线里的桌面端状态一次性拆到
+   * claude-desktop。解密失败时保持原样，让真正依赖基线的操作在那里报错。
+   */
+  async _readGatewayBaselines() {
+    const data = GatewayBaselineStoreSchema.parse(await this.gatewayBaselineStore.read())
+    const claudeEntry = data.baselines?.[TARGET.CLAUDE]
+    if (!claudeEntry || data.baselines[TARGET.CLAUDE_DESKTOP]) return data
+    let state
+    try {
+      state = JSON.parse(this.vault.decrypt(claudeEntry.encryptedState))
+    } catch {
+      return data
+    }
+    if (!state || typeof state !== 'object'
+      || !Object.prototype.hasOwnProperty.call(state, 'desktopConfig')) {
+      return data
+    }
+    const desktopKeys = [
+      'desktopConfig',
+      'desktopProfileId',
+      ...Object.values(CLAUDE_DESKTOP_STATE_KEYS),
+    ]
+    const desktopState = {}
+    const claudeState = { ...state }
+    for (const key of desktopKeys) {
+      if (Object.prototype.hasOwnProperty.call(claudeState, key)) {
+        desktopState[key] = claudeState[key]
+        delete claudeState[key]
+      }
+    }
+    const next = {
+      version: GATEWAY_BASELINE_VERSION,
+      baselines: {
+        ...data.baselines,
+        [TARGET.CLAUDE]: {
+          ...claudeEntry,
+          encryptedState: this.vault.encrypt(JSON.stringify(claudeState)),
+        },
+        [TARGET.CLAUDE_DESKTOP]: {
+          capturedAt: claudeEntry.capturedAt,
+          ...(claudeEntry.contractVersion
+            ? { contractVersion: claudeEntry.contractVersion }
+            : {}),
+          encryptedState: this.vault.encrypt(JSON.stringify(desktopState)),
+          ...(claudeEntry.encryptedBackup
+            ? { encryptedBackup: claudeEntry.encryptedBackup }
+            : {}),
+        },
+      },
+    }
+    await this.gatewayBaselineStore.write(next)
+    return GatewayBaselineStoreSchema.parse(next)
+  }
+
+  /**
    * 读取可展示的事务历史。
    *
    * @returns {Promise<object[]>} 已移除敏感内部字段的历史记录。
@@ -238,16 +315,27 @@ class ApplyService {
   async startGateway(settings = {}) {
     if (!this.gatewayService) throw new Error('Local gateway is unavailable')
     return this.serial.run(async () => {
-      const groups = this.gatewayService.getRouteGroups()
-      if (groups.length === 0) {
+      const weighted = this.gatewayService.getRoutingMode?.() === 'weighted'
+      const groups = weighted ? [] : this.gatewayService.getRouteGroups()
+      const targetCandidates = weighted
+        ? new Map(await Promise.all(TARGETS.map(async (target) => [
+            target,
+            await this.gatewayService.getWeightedCandidates(target),
+          ])))
+        : undefined
+      if (!weighted && groups.length === 0) {
         throw new Error('Assign at least one profile before starting the local gateway')
       }
-      const assigned = new Set(groups.flatMap((group) => group.targets))
+      const assigned = weighted
+        ? new Set(TARGETS.filter((target) => (targetCandidates.get(target) || []).length > 0))
+        : new Set(groups.flatMap((group) => group.targets))
       const requested = settings.targets === undefined
         ? [...assigned]
         : settings.targets.filter((target) => assigned.has(target))
       if (requested.length === 0) {
-        throw new Error('Assign a profile to this client before engaging it')
+        throw new Error(weighted
+          ? 'Enable at least one weighted profile before engaging this client'
+          : 'Assign a profile to this client before engaging it')
       }
 
       const state = this.gatewayService.getPublicState()
@@ -257,12 +345,24 @@ class ApplyService {
       if (fresh.length === 0) return state
 
       const entries = []
-      for (const group of groups) {
-        for (const target of group.targets) {
-          if (!fresh.includes(target)) continue
-          const connection = await this.profileService.getConnection(group.profileId)
+      if (weighted) {
+        for (const target of fresh) {
+          const candidate = [...(targetCandidates.get(target) || [])]
+            .sort((left, right) => (right.routing.weight - left.routing.weight))
+            .find(Boolean)
+          if (!candidate) throw new Error(`No weighted profile is available for ${target}`)
+          const connection = await this.profileService.getConnection(candidate.id)
           this._assertProfileTarget(connection.profile, target)
           entries.push({ ...connection, target })
+        }
+      } else {
+        for (const group of groups) {
+          for (const target of group.targets) {
+            if (!fresh.includes(target)) continue
+            const connection = await this.profileService.getConnection(group.profileId)
+            this._assertProfileTarget(connection.profile, target)
+            entries.push({ ...connection, target })
+          }
         }
       }
 
@@ -371,7 +471,7 @@ class ApplyService {
       }
     }
 
-    const baselineData = GatewayBaselineStoreSchema.parse(await this.gatewayBaselineStore.read())
+    const baselineData = await this._readGatewayBaselines()
     let recovery
     for (let attempt = 0; attempt < GATEWAY_RECOVERY_ATTEMPTS; attempt += 1) {
       recovery = await this._prepareGatewayRecovery({
@@ -429,7 +529,7 @@ class ApplyService {
     }
 
     const beforeGateway = this.gatewayService.getPublicState()
-    const baselineData = GatewayBaselineStoreSchema.parse(await this.gatewayBaselineStore.read())
+    const baselineData = await this._readGatewayBaselines()
     const storedBaseline = baselineData.baselines[TARGET.CODEX]
     let baseline
     if (storedBaseline) {
@@ -571,7 +671,7 @@ class ApplyService {
       const gatewayState = this.gatewayService.getPublicState()
       let baselineData
       try {
-        baselineData = GatewayBaselineStoreSchema.parse(await this.gatewayBaselineStore.read())
+        baselineData = await this._readGatewayBaselines()
       } catch (error) {
         for (const target of staleEngaged) failures.push({ target, error })
       }
@@ -665,7 +765,8 @@ class ApplyService {
             gateway: true,
             baseline,
             allowExternalGatewayHandoff,
-            allowLegacyModelDiscovery: target === TARGET.CLAUDE
+            allowLegacyModelDiscovery: (target === TARGET.CLAUDE
+              || target === TARGET.CLAUDE_DESKTOP)
               && storedBaseline?.contractVersion === undefined,
           },
         )
@@ -814,7 +915,7 @@ class ApplyService {
 
   async _writeGatewayEntries(entries, _options = {}) {
     if (entries.length === 0) return
-    const baselineData = GatewayBaselineStoreSchema.parse(await this.gatewayBaselineStore.read())
+    const baselineData = await this._readGatewayBaselines()
     const previousBaselines = { ...baselineData.baselines }
     const nextBaselines = { ...previousBaselines }
     const draftGroups = []

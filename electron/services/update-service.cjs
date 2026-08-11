@@ -1,6 +1,6 @@
 const electronUpdater = require('electron-updater')
 
-const RELEASE_DOWNLOAD_URL = 'https://github.com/trygn35-ui/agentgate/releases/latest'
+const RELEASE_DOWNLOAD_URL = 'https://github.com/tryyyyyygn/AgentGate/releases/latest'
 
 /** 便携版无法就地替换自身，只能引导用户手动下载。 */
 const PORTABLE = Boolean(process.env.PORTABLE_EXECUTABLE_FILE)

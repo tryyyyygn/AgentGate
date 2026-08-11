@@ -531,7 +531,7 @@ command = "node"
       expect(takenOver).not.toContain("sk-upstream-a");
 
       const recovery = await gatewayBaselineStore.read();
-      expect(recovery.version).toBe(2);
+      expect(recovery.version).toBe(3);
       const baseline = recovery.baselines.codex;
       expect(JSON.parse(testVault.decrypt(baseline.encryptedState))).toEqual({
         providerId: "custom",
@@ -1793,5 +1793,116 @@ wire_api = "responses"
     } finally {
       await gatewayService.stop().catch(() => {});
     }
+  });
+});
+
+describe("网关基线库 v3 拆分迁移", () => {
+  it("把 claude 基线里的桌面端状态拆到 claude-desktop，且幂等", async () => {
+    const capturedAt = new Date().toISOString();
+    const combinedState = {
+      baseUrl: { present: true, value: "https://cli.example" },
+      apiKey: { present: false, value: null },
+      authToken: { present: false, value: null },
+      model: { present: true, value: "native-model" },
+      toolSearch: { present: false, value: null },
+      desktopConfig: { present: true, value: null },
+      desktopProfileId: "11111111-1111-4111-8111-111111111111",
+      desktopProvider: { present: true, value: "gateway" },
+      desktopBaseUrl: { present: true, value: "https://desktop.example" },
+      desktopCredentialKind: { present: true, value: "interactive" },
+      desktopApiKey: { present: false, value: null },
+      desktopAuthScheme: { present: false, value: null },
+      desktopOidc: { present: true, value: { issuer: "https://issuer.example" } },
+      desktopModelDiscovery: { present: false, value: null },
+      desktopModels: { present: true, value: ["before-model"] },
+      desktopDisableModeChooser: { present: false, value: null },
+    };
+    let stored = {
+      version: 2,
+      baselines: {
+        claude: {
+          capturedAt,
+          encryptedState: testVault.encrypt(JSON.stringify(combinedState)),
+        },
+      },
+    };
+    const gatewayBaselineStore = {
+      read: vi.fn(async () => structuredClone(stored)),
+      write: vi.fn(async (value) => {
+        stored = structuredClone(value);
+        return structuredClone(value);
+      }),
+    };
+    const applyService = new ApplyService({
+      profileService: {},
+      adapters: {},
+      historyStore: {},
+      backupDirectory: path.join(root, "backups"),
+      vault: testVault,
+      gatewayBaselineStore,
+    });
+
+    const data = await applyService._readGatewayBaselines();
+
+    expect(data.version).toBe(3);
+    const claudeState = JSON.parse(testVault.decrypt(data.baselines.claude.encryptedState));
+    expect(claudeState).toEqual({
+      baseUrl: { present: true, value: "https://cli.example" },
+      apiKey: { present: false, value: null },
+      authToken: { present: false, value: null },
+      model: { present: true, value: "native-model" },
+      toolSearch: { present: false, value: null },
+    });
+    const desktopEntry = data.baselines["claude-desktop"];
+    expect(desktopEntry.capturedAt).toBe(capturedAt);
+    const desktopState = JSON.parse(testVault.decrypt(desktopEntry.encryptedState));
+    expect(desktopState.desktopProfileId).toBe("11111111-1111-4111-8111-111111111111");
+    expect(desktopState.desktopConfig).toEqual({ present: true, value: null });
+    expect(desktopState.desktopModels).toEqual({ present: true, value: ["before-model"] });
+    expect(desktopState.desktopOidc).toEqual({
+      present: true,
+      value: { issuer: "https://issuer.example" },
+    });
+
+    const writes = gatewayBaselineStore.write.mock.calls.length;
+    const again = await applyService._readGatewayBaselines();
+    expect(gatewayBaselineStore.write.mock.calls.length).toBe(writes);
+    expect(again.baselines["claude-desktop"].encryptedState)
+      .toBe(data.baselines["claude-desktop"].encryptedState);
+  });
+
+  it("claude 基线没有桌面状态时不生成 claude-desktop 条目", async () => {
+    let stored = {
+      version: 2,
+      baselines: {
+        claude: {
+          capturedAt: new Date().toISOString(),
+          encryptedState: testVault.encrypt(JSON.stringify({
+            baseUrl: { present: true, value: "https://cli.example" },
+          })),
+        },
+      },
+    };
+    const gatewayBaselineStore = {
+      read: vi.fn(async () => structuredClone(stored)),
+      write: vi.fn(async (value) => {
+        stored = structuredClone(value);
+        return structuredClone(value);
+      }),
+    };
+    const applyService = new ApplyService({
+      profileService: {},
+      adapters: {},
+      historyStore: {},
+      backupDirectory: path.join(root, "backups"),
+      vault: testVault,
+      gatewayBaselineStore,
+    });
+
+    const data = await applyService._readGatewayBaselines();
+
+    expect(data.version).toBe(3);
+    expect(data.baselines["claude-desktop"]).toBeUndefined();
+    expect(gatewayBaselineStore.write).not.toHaveBeenCalled();
   });
 });

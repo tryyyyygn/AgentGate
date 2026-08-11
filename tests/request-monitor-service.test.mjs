@@ -238,6 +238,49 @@ describe("活动请求监视", () => {
     expect(monitor.list()[0].firstTokenLatencyMs).toBe(1_000);
   });
 
+  it("Responses 空 message output_item 与 Sub2API 一样记为首字", () => {
+    let now = 20_000;
+    const monitor = new RequestMonitorService({ now: () => now });
+    const id = monitor.start({
+      profileName: "Sub2API 首字口径",
+      protocol: "openai-responses",
+      streaming: true,
+    });
+    monitor.responseStarted(id, { statusCode: 200, streaming: true });
+
+    now += 1_900;
+    expect(monitor.observeChunk(
+      id,
+      'event: response.output_item.added\ndata: {"type":"response.output_item.added","item":{"type":"message","content":[]}}\n\n',
+    )).toBe(true);
+    expect(monitor.list()[0].firstTokenLatencyMs).toBe(1_900);
+
+    now += 5_300;
+    monitor.observeChunk(id, 'data: {"type":"response.output_text.delta","delta":"完成"}\n\n');
+    expect(monitor.list()[0].firstTokenLatencyMs).toBe(1_900);
+  });
+
+  it("Responses 只有 SSE event 前导名时也不把 created/in_progress 算成首字", () => {
+    let now = 21_000;
+    const monitor = new RequestMonitorService({ now: () => now });
+    const id = monitor.start({ profileName: "Responses 前导事件", protocol: "openai-responses", streaming: true });
+    monitor.responseStarted(id, { statusCode: 200, streaming: true });
+
+    now += 700;
+    expect(monitor.observeChunk(
+      id,
+      'event: response.created\ndata: {"response":{"id":"r"}}\n\n',
+    )).toBe(false);
+    expect(monitor.list()[0].firstTokenLatencyMs).toBeUndefined();
+
+    now += 300;
+    expect(monitor.observeChunk(
+      id,
+      'event: response.output_item.added\ndata: {"item":{"type":"message"}}\n\n',
+    )).toBe(true);
+    expect(monitor.list()[0].firstTokenLatencyMs).toBe(1_000);
+  });
+
   it.each([
     [
       "Responses 推理",
@@ -317,6 +360,90 @@ describe("活动请求监视", () => {
       firstByteLatencyMs: 40,
       firstTokenLatencyMs: 40,
     });
+  });
+
+  it("Codex Responses 首字从上游转发开始、总耗时从客户端请求开始起算", () => {
+    let now = 1_000;
+    const monitor = new RequestMonitorService({ now: () => now });
+    const id = monitor.start({ profileName: "计时对齐", protocol: "openai-responses", streaming: true });
+
+    now = 2_500;
+    expect(monitor.upstreamRequestStarted(id)).toBe(true);
+    expect(monitor.upstreamRequestStarted(id)).toBe(false);
+    monitor.responseStarted(id, { statusCode: 200, streaming: true });
+    now = 3_000;
+    monitor.observeChunk(id, 'data: {"type":"response.output_item.added","item":{"type":"message","content":[]}}\n\n');
+
+    expect(monitor.list()[0]).toMatchObject({
+      firstByteLatencyMs: 500,
+      firstTokenLatencyMs: 500,
+    });
+    now = 4_000;
+    monitor.end(id);
+    expect(monitor.list()[0].durationMs).toBe(3_000);
+  });
+
+  it("保留可公开的传输阶段数据，忽略无效值", () => {
+    const monitor = new RequestMonitorService({ now: () => 1_000 });
+    const id = monitor.start({ profileName: "传输阶段", protocol: "openai-responses" });
+
+    expect(monitor.recordTransport(id, {
+      clientRequestBytes: 2_048,
+      clientRequestBodyCompletedAtMs: 15,
+      upstreamRequestBytes: 612,
+      upstreamRequestContentEncoding: "gzip",
+      upstreamRequestFinishedAtMs: 32,
+      upstreamResponseHeadersAtMs: 721,
+      upstreamResponseContentEncoding: "gzip",
+      upstreamFirstByteAtMs: 734,
+      upstreamResponseEndedAtMs: 1_488,
+      ignored: "not persisted",
+    })).toBe(true);
+    expect(monitor.recordTransport(id, {
+      clientRequestBytes: -1,
+      upstreamRequestContentEncoding: "x".repeat(65),
+    })).toBe(false);
+
+    monitor.end(id);
+    expect(monitor.list()[0].transport).toEqual({
+      clientRequestBytes: 2_048,
+      clientRequestBodyCompletedAtMs: 15,
+      upstreamRequestBytes: 612,
+      upstreamRequestContentEncoding: "gzip",
+      upstreamRequestFinishedAtMs: 32,
+      upstreamResponseHeadersAtMs: 721,
+      upstreamResponseContentEncoding: "gzip",
+      upstreamFirstByteAtMs: 734,
+      upstreamResponseEndedAtMs: 1_488,
+    });
+    expect(RequestLogStoreSchema.safeParse({ version: 1, entries: monitor.list() }).success).toBe(true);
+  });
+
+  it("模型映射后响应里的上游模型不覆盖客户端请求的模型", () => {
+    let now = 6_000;
+    const monitor = new RequestMonitorService({ now: () => now });
+    const id = monitor.start({
+      client: "claude-desktop",
+      profileName: "Kimi For Coding",
+      upstreamUrl: "https://api.kimi.com/coding",
+      protocol: "anthropic",
+    });
+    monitor.updateMetadata(id, { model: "claude-sonnet-5", upstreamModel: "k3" });
+    monitor.responseStarted(id, {
+      statusCode: 200,
+      contentType: "application/json",
+    });
+    now += 20;
+    monitor.observeChunk(id, Buffer.from(JSON.stringify({
+      model: "k3",
+      content: [{ type: "text", text: "response body" }],
+    }), "utf8"));
+    monitor.end(id);
+
+    const [entry] = monitor.list();
+    expect(entry.model).toBe("claude-sonnet-5");
+    expect(entry.upstreamModel).toBe("k3");
+    expect(JSON.stringify(entry)).not.toContain("response body");
   });
 
   it("非流式结构化响应只记录首包，不把完整正文到达误报成 TTFT", () => {

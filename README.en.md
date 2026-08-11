@@ -6,8 +6,8 @@ A local API key manager and loopback gateway for Windows AI clients.
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [English](README.en.md)
 
-[![Release](https://img.shields.io/github/v/release/trygn35-ui/agentgate?style=flat-square)](https://github.com/trygn35-ui/agentgate/releases/latest)
-[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftrygn35-ui%2Fagentgate%2Fmain%2Fdocs%2Fdownload-count.json&style=flat-square)](https://github.com/trygn35-ui/agentgate/releases)
+[![Release](https://img.shields.io/github/v/release/tryyyyyygn/AgentGate?style=flat-square)](https://github.com/tryyyyyygn/AgentGate/releases/latest)
+[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftryyyyyygn%2FAgentGate%2Fmain%2Fdocs%2Fdownload-count.json&style=flat-square)](https://github.com/tryyyyyygn/AgentGate/releases)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2F78D0?style=flat-square)](#download)
 [![License](https://img.shields.io/badge/license-Community%20Use-FF9100?style=flat-square)](LICENSE)
 
@@ -40,10 +40,13 @@ Agent;Gate is not a hosted service or a shared proxy. It has no account system, 
 | --- | --- | --- |
 | Codex | Stable | OpenAI Responses, Chat Completions |
 | Claude Code | Experimental | Anthropic Messages |
+| Claude Code Desktop | Experimental | Anthropic Messages (with model mapping) |
 | OpenCode | Experimental | Anthropic, OpenAI, Gemini |
 | Gemini CLI | Experimental | Gemini |
 
 Experimental clients may change their configuration format. Agent;Gate limits edits to fields it owns and restores them when a client is released, but it is still worth checking the config after a major client update.
+
+The Claude Code CLI and desktop app are separate client targets and can be engaged independently with different profiles. A profile's model mapping rewrites the model sent by the client into the upstream model — for example, mapping every Claude desktop tier such as `claude-sonnet-5` to Kimi For Coding's `k3`; a Kimi preset is available when creating a profile.
 
 ## Wallet and key groups
 
@@ -66,7 +69,7 @@ Each channel can be excluded from monitoring, use its own probe model, and be se
 
 ## Download
 
-Get the latest build from [Releases](https://github.com/trygn35-ui/agentgate/releases/latest):
+Get the latest build from [Releases](https://github.com/tryyyyyygn/AgentGate/releases/latest):
 
 | File | Use |
 | --- | --- |

@@ -190,6 +190,54 @@ export function SettingsView({
             disabled={busy}
             onChange={(startGatewayOnLaunch) => onChange({ startGatewayOnLaunch })}
           />
+          <div className="settings-theme-row" style={{ borderTop: "1px solid var(--line)" }}>
+            <span className="settings-row-copy">
+              <strong>{m.config.routingMode}</strong>
+            </span>
+            <div className="theme-segments" role="radiogroup" aria-label={m.config.routingMode}>
+              {([
+                ["assignment", m.config.routingAssignment],
+                ["weighted", m.config.routingWeighted],
+              ] as const).map(([mode, label]) => (
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={settings.routing.mode === mode}
+                  className={settings.routing.mode === mode ? "active" : ""}
+                  disabled={busy}
+                  key={mode}
+                  onClick={() => onChange({ routing: { ...settings.routing, mode } })}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {settings.routing.mode === "weighted" && (
+            <div className="settings-theme-row">
+              <span className="settings-row-copy">
+                <strong>{m.config.routingStrategy}</strong>
+              </span>
+              <div className="theme-segments" role="radiogroup" aria-label={m.config.routingStrategy}>
+                {([
+                  ["fixed", m.config.routingFixed],
+                  ["adaptive", m.config.routingAdaptive],
+                ] as const).map(([strategy, label]) => (
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={settings.routing.strategy === strategy}
+                    className={settings.routing.strategy === strategy ? "active" : ""}
+                    disabled={busy}
+                    key={strategy}
+                    onClick={() => onChange({ routing: { ...settings.routing, strategy } })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <UpdateRow
             update={update}
             version={version}

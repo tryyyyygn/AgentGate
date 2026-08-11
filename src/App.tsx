@@ -14,7 +14,7 @@ import { SettingsView } from "./components/SettingsView";
 import { StatusView } from "./components/StatusView";
 import { Toast } from "./components/Toast";
 import { WalletView } from "./components/WalletView";
-import { APP_VERSION, DEFAULT_SETTINGS } from "./config";
+import { APP_VERSION, CLIENT_TARGET_ORDER, DEFAULT_SETTINGS } from "./config";
 import { useAgentGateController } from "./hooks/useAgentGateController";
 import { I18nProvider, useI18n } from "./i18n";
 import type { Messages } from "./i18n";
@@ -69,6 +69,8 @@ const KeyringPage = memo(KeyringView, (previous, next) => (
   && previous.profiles === next.profiles
   && previous.groups === next.groups
   && previous.gateway === next.gateway
+  && previous.settings === next.settings
+  && previous.routingMode === next.routingMode
   && previous.busy === next.busy
   && previous.busyId === next.busyId
   && previous.loading === next.loading
@@ -350,6 +352,9 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
         profiles={controller.data.profiles}
         groups={profileGroups}
         gateway={gateway}
+        routingMode={settings.routing.mode}
+        settings={settings}
+        onSettingsChange={(patch) => void controller.updateSettings(patch)}
         busy={controller.busy}
         busyId={controller.busyId}
         loading={controller.busy === "load"}
@@ -363,6 +368,7 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
         onTestAll={() => void controller.checkAllProfilesHealth()}
         testingIds={controller.testingIds}
         onDiscoverModels={(id) => void controller.testProfile(id)}
+        onUpdateRouting={controller.updateProfileRouting}
         onCopyKey={(profile) => void controller.copyKey(profile)}
         onSaveGroup={controller.saveProfileGroup}
         onDeleteGroup={controller.deleteProfileGroup}
@@ -443,7 +449,7 @@ function AppShell({ controller }: { controller: ReturnType<typeof useAgentGateCo
         <span><ShieldCheck size={12} />{m.footer.sealed}</span>
         <span className="footer-right">
           <RollingNumber as="span" value={String(controller.data.profiles.length)} />
-          {" "}{m.footer.profiles} / 4 {m.footer.clients} · Agent;Gate {APP_VERSION}
+          {" "}{m.footer.profiles} / {CLIENT_TARGET_ORDER.length} {m.footer.clients} · Agent;Gate {APP_VERSION}
           {!isDesktop && ` · ${m.footer.preview}`}
         </span>
       </footer>

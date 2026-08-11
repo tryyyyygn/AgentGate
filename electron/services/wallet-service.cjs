@@ -293,7 +293,7 @@ function sub2ApiProfileConnection(siteUrl, platform) {
       protocol: 'anthropic',
       baseUrl: siteUrl,
       authMode: 'bearer',
-      targets: ['claude'],
+      targets: ['claude', 'claude-desktop'],
     }
   }
   return platform === 'openai'

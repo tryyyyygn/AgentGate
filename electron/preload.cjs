@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 const CHANNELS = Object.freeze({
   bootstrap: 'agentgate:get-bootstrap',
   saveProfile: 'agentgate:save-profile',
+  updateProfileRouting: 'agentgate:update-profile-routing',
   duplicateProfile: 'agentgate:duplicate-profile',
   reorderProfiles: 'agentgate:reorder-profiles',
   createProfileGroup: 'agentgate:create-profile-group',
@@ -76,6 +77,7 @@ const CHANNELS = Object.freeze({
 const api = Object.freeze({
   getBootstrap: () => ipcRenderer.invoke(CHANNELS.bootstrap),
   saveProfile: (input) => ipcRenderer.invoke(CHANNELS.saveProfile, input),
+  updateProfileRouting: (id, input) => ipcRenderer.invoke(CHANNELS.updateProfileRouting, id, input),
   duplicateProfile: (id) => ipcRenderer.invoke(CHANNELS.duplicateProfile, id),
   reorderProfiles: (ids) => ipcRenderer.invoke(CHANNELS.reorderProfiles, ids),
   createProfileGroup: (name, profileIds) => (

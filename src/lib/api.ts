@@ -82,10 +82,17 @@ let mockProfiles: Profile[] = [
     availableModels: ["claude-sonnet-4-5", "claude-opus-4-1"],
     keyHint: "•••• 18F2",
     model: "claude-sonnet-4-5",
+    modelRoutes: {},
     authMode: "bearer",
     targets: ["claude", "opencode"],
     enableToolSearch: true,
     autoSwitch: { enabled: true, intervalMinutes: 2 },
+    routing: {
+      enabled: true,
+      enabledModels: ["claude-sonnet-4-5", "claude-opus-4-1"],
+      weight: 100,
+      autoDisableOnFailure: false,
+    },
     createdAt: minutesAgo(2400),
     updatedAt: minutesAgo(18),
     lastAppliedAt: minutesAgo(18),
@@ -113,9 +120,16 @@ let mockProfiles: Profile[] = [
     availableModels: ["gpt-5.2-codex", "gpt-5.2"],
     keyHint: "•••• 71C3",
     model: "gpt-5.2-codex",
+    modelRoutes: {},
     authMode: "bearer",
     targets: ["codex", "opencode"],
     autoSwitch: { enabled: false, intervalMinutes: 2 },
+    routing: {
+      enabled: true,
+      enabledModels: ["gpt-5.2-codex", "gpt-5.2"],
+      weight: 100,
+      autoDisableOnFailure: false,
+    },
     createdAt: minutesAgo(1800),
     updatedAt: minutesAgo(51),
     health: { status: "healthy", latencyMs: 243, checkedAt: minutesAgo(8) },
@@ -140,9 +154,16 @@ let mockProfiles: Profile[] = [
     availableModels: [],
     keyHint: "•••• 90A1",
     model: "gemini-2.5-flash",
+    modelRoutes: {},
     authMode: "api-key",
     targets: ["gemini"],
     autoSwitch: { enabled: false, intervalMinutes: 2 },
+    routing: {
+      enabled: true,
+      enabledModels: [],
+      weight: 0,
+      autoDisableOnFailure: false,
+    },
     createdAt: minutesAgo(900),
     updatedAt: minutesAgo(90),
     health: { status: "unknown" },
@@ -220,6 +241,12 @@ let mockClients: ClientStatus[] = [
     activeProfileId: "relay-a",
     activeProfileName: "主力中转",
     baseUrl: "https://api.relay-a.example",
+  },
+  {
+    target: "claude-desktop",
+    label: "Claude Desktop",
+    path: "~/AppData/Local/Claude-3p/configLibrary",
+    installed: true,
   },
   {
     target: "codex",
@@ -340,6 +367,28 @@ const mockRequests = [
     streaming: true,
     receivedBytes: 226,
   },
+  {
+    id: "request-mapped",
+    client: "claude-desktop" as const,
+    profileId: "relay-a",
+    profileName: "Kimi For Coding",
+    keyHint: "•••• 18F2",
+    upstreamUrl: "https://api.kimi.com/coding/v1/messages",
+    protocol: "anthropic" as const,
+    state: "completed" as const,
+    outcome: "completed" as const,
+    startedAt: secondsAgo(50),
+    completedAt: secondsAgo(42),
+    durationMs: 8_400,
+    firstByteLatencyMs: 1_120,
+    firstTokenLatencyMs: 2_260,
+    statusCode: 200,
+    model: "claude-fable-5",
+    upstreamModel: "k3",
+    streaming: true,
+    receivedBytes: 52_300,
+    tokenUsage: { inputTokens: 18_420, outputTokens: 965, cachedTokens: 12_050, totalTokens: 19_385 },
+  },
 ];
 
 const clone = <T,>(value: T): T => structuredClone(value);
@@ -457,6 +506,12 @@ const mockBridge: AgentGateBridge = {
       updatedAt: timestamp,
       lastAppliedAt: existing?.lastAppliedAt,
       health: existing?.health ?? { status: "unknown" },
+      routing: existing?.routing ?? {
+        enabled: true,
+        enabledModels: [],
+        weight: 0,
+        autoDisableOnFailure: false,
+      },
     };
     delete (profile as Profile & { apiKey?: string }).apiKey;
     if (existing) {
@@ -826,8 +881,32 @@ const mockBridge: AgentGateBridge = {
   },
 
   async updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
-    mockSettings = { ...mockSettings, ...patch };
+    mockSettings = {
+      ...mockSettings,
+      ...patch,
+      ...(patch.routing ? { routing: { ...mockSettings.routing, ...patch.routing } } : {}),
+    };
     return clone(mockSettings);
+  },
+
+  async updateProfileRouting(id, input) {
+    const profile = mockProfiles.find((item) => item.id === id);
+    if (!profile) throw new Error("方案不存在");
+    const knownModels = new Set(profile.endpoints.flatMap((endpoint) => endpoint.models));
+    const enabledModels = [...new Set(input.enabledModels)].filter((model) => knownModels.has(model));
+    const next = {
+      ...profile,
+      routing: {
+        ...profile.routing,
+        enabled: input.enabled,
+        enabledModels,
+        weight: input.weight,
+        autoDisableOnFailure: input.autoDisableOnFailure,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    mockProfiles = mockProfiles.map((item) => item.id === id ? next : item);
+    return clone(next);
   },
 
   async listWallets(): Promise<Wallet[]> {
@@ -933,9 +1012,16 @@ const mockBridge: AgentGateBridge = {
       availableModels: [],
       keyHint: "•••• DEMO",
       model: "",
+      modelRoutes: {},
       authMode: "bearer",
       targets: ["codex"],
       autoSwitch: { enabled: false, intervalMinutes: 2 },
+      routing: {
+        enabled: true,
+        enabledModels: [],
+        weight: 0,
+        autoDisableOnFailure: false,
+      },
       createdAt: timestamp,
       updatedAt: timestamp,
     };

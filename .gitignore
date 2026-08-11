@@ -1,6 +1,7 @@
 node_modules/
 dist/
 release/
+release-*/
 deliverables/
 output/
 .claude/
@@ -13,3 +14,4 @@ agentgate-test-data/
 .ruff_cache/
 *.log
 .DS_Store
+/status-page/

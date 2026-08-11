@@ -1,6 +1,6 @@
 {
   "name": "agentgate",
-  "version": "1.8.5",
+  "version": "1.9.0",
   "author": "TRYGN",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
@@ -20,6 +20,7 @@
     "@iarna/toml": "^2.2.5",
     "better-sqlite3": "^12.11.1",
     "electron-updater": "^6.8.9",
+    "http2-wrapper": "^1.0.3",
     "jsonc-parser": "^3.3.1",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
@@ -53,8 +54,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "trygn35-ui",
-        "repo": "agentgate"
+        "owner": "tryyyyyygn",
+        "repo": "AgentGate"
       }
     ],
     "directories": {

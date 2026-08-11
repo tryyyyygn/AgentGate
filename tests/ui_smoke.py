@@ -87,15 +87,16 @@ with sync_playwright() as playwright:
     settings_page = page.locator('main[aria-label="Config"]')
     settings_page.evaluate("node => { node.dataset.mountProbe = 'settings'; }")
 
-    # 概览：hero 标题 + 四张客户端卡片
+    # 概览：hero 标题 + 五张客户端卡片
     page.get_by_role("button", name="OVERVIEW", exact=True).click()
     page.locator(".hero h1").wait_for()
     assert settings_page.get_attribute("data-mount-probe") == "settings"
     overview_page = page.locator('main[aria-label="OVERVIEW"]')
     overview_page.evaluate("node => { node.dataset.mountProbe = 'overview'; }")
-    assert page.locator(".socket-card").count() == 4
-    assert page.locator(".socket-title small").count() == 3
+    assert page.locator(".socket-card").count() == 5
+    assert page.locator(".socket-title small").count() == 4
     assert page.locator(".socket-title small").all_inner_texts() == [
+        "(EXPERIMENTAL)",
         "(EXPERIMENTAL)",
         "(EXPERIMENTAL)",
         "(EXPERIMENTAL)",
@@ -293,8 +294,7 @@ with sync_playwright() as playwright:
     assert stream.locator(".request-time").count() == 3
     assert stream.locator(".request-state-label").count() == 0
     assert stream.locator(".request-timing small[title]").count() == 0
-    token_hint = stream.locator(".request-row").first.locator(".tok-detail").get_attribute("data-hint")
-    assert token_hint is not None and "incl. cache" not in token_hint
+    assert stream.locator(".request-row [data-hint]").count() == 0
     assert stream.locator(".request-row").first.evaluate(
         "node => getComputedStyle(node).animationName"
     ) == "none"
@@ -415,7 +415,7 @@ with sync_playwright() as playwright:
     page.get_by_role("heading", name="Config", exact=True).wait_for()
     assert page.get_by_text("Codex tool bridge").count() == 0
     assert page.locator(".settings-row-copy small").count() == 0
-    assert page.get_by_text("Current version 1.8.2", exact=True).is_visible()
+    assert page.get_by_text("Current version 1.9.0", exact=True).is_visible()
 
     # 深色主题恢复原有的高对比信息蓝。
     page.get_by_role("radio", name="β FIELD", exact=True).click()

@@ -2,6 +2,7 @@ import { ArrowRight, ChevronDown, Repeat2, RotateCcw, Settings2 } from "lucide-r
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { CLIENT_META, CLIENT_TARGET_ORDER, PROTOCOL_META } from "../config";
+import { ClientIcon } from "./ClientIcon";
 import { useI18n } from "../i18n";
 import {
   computeDivergence,
@@ -354,7 +355,11 @@ export function OverviewView({
                     <span className="socket-fill" aria-hidden="true" />
                     <span className="socket-no">{String(index + 1).padStart(2, "0")}</span>
                     <span className="socket-title">
-                      <strong>{CLIENT_META[target].label.toUpperCase()}</strong>
+                      <strong title={CLIENT_META[target].label}>
+                        <ClientIcon target={target} size={16} />
+                        <em className="socket-kind">{CLIENT_META[target].short}</em>
+                        <span className="sr-only">{CLIENT_META[target].label}</span>
+                      </strong>
                       {target !== "codex" && (
                         <small>{m.overview.experimental}</small>
                       )}

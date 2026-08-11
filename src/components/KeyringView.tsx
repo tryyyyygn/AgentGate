@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { DragEvent as ReactDragEvent, FormEvent, ReactElement } from "react";
-import { CLIENT_META, PROTOCOL_META } from "../config";
+import { CLIENT_META, DEFAULT_SETTINGS, PROTOCOL_META } from "../config";
 import { useI18n } from "../i18n";
 import type { Messages } from "../i18n";
 import { getHealthBarTone, LIMITED_LATENCY_MS } from "../lib/health";
@@ -30,10 +30,12 @@ import { useFlipList } from "../lib/useFlipList";
 import type {
   ClientTarget,
   GatewayState,
+  AppSettings,
   Profile,
   ProfileEndpoint,
   ProfileGroup,
   ProfileOrganizationInput,
+  UpdateProfileRoutingInput,
 } from "../types";
 import type { BusyAction } from "../ui-types";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -216,6 +218,9 @@ interface KeyringViewProps {
   profiles: Profile[];
   groups?: ProfileGroup[];
   gateway: GatewayState;
+  routingMode: "assignment" | "weighted";
+  settings?: AppSettings;
+  onSettingsChange?: (patch: Partial<AppSettings>) => void;
   busy: BusyAction | null;
   busyId?: string;
   loading: boolean;
@@ -230,6 +235,7 @@ interface KeyringViewProps {
   /** 正在检测端点的方案 ID；检测不锁定其他操作。 */
   testingIds: ReadonlySet<string>;
   onDiscoverModels: (id: string) => void;
+  onUpdateRouting: (id: string, input: UpdateProfileRoutingInput) => Promise<boolean>;
   onCopyKey: (profile: Profile) => void;
   onSaveGroup: (
     group: ProfileGroup | undefined,
@@ -340,6 +346,9 @@ export function KeyringView({
   profiles,
   groups = [],
   gateway,
+  routingMode,
+  settings = DEFAULT_SETTINGS,
+  onSettingsChange,
   busy,
   busyId,
   loading,
@@ -353,6 +362,7 @@ export function KeyringView({
   onTestAll,
   testingIds,
   onDiscoverModels,
+  onUpdateRouting,
   onCopyKey,
   onSaveGroup,
   onDeleteGroup,
@@ -559,6 +569,24 @@ export function KeyringView({
     setExpandedId(duplicate.id);
   }
 
+  function setFailoverCandidate(profile: Profile, target: ClientTarget, allowed: boolean): void {
+    if (!onSettingsChange) return;
+    const current = settings.failover[target] ?? { enabled: false, profileIds: [] };
+    const profileIds = allowed
+      ? [...new Set([...current.profileIds, profile.id])]
+      : current.profileIds.filter((id) => id !== profile.id);
+    onSettingsChange({
+      failover: {
+        ...settings.failover,
+        [target]: {
+          ...current,
+          enabled: profileIds.length > 0 ? current.enabled || allowed : false,
+          profileIds,
+        },
+      },
+    });
+  }
+
   return (
     <main className="page-scroll" aria-label={m.keys.title} hidden={!active}>
       <div className="page-inner">
@@ -740,6 +768,10 @@ export function KeyringView({
               const testing = testingIds.has(profile.id);
               const discovering = busy === "test" && busyId === profile.id;
               const applying = busy === "apply" && busyId === profile.id;
+              const availableModels = [...new Set(profile.availableModels)];
+              const selectedModels = new Set(profile.routing.enabledModels);
+              const allModelsSelected = availableModels.length > 0
+                && availableModels.every((model) => selectedModels.has(model));
               const rowClass = [
                 "keyring-row",
                 dragId === profile.id ? "dragging" : "",
@@ -836,22 +868,41 @@ export function KeyringView({
                       </span>
                     </button>
                     <span className="keyring-tools">
-                      <button
-                        type="button"
-                        className="ghost-pill keyring-assign"
-                        title={inUse ? m.keys.inUseHint : fill(m.keys.switchTo, { name: profile.name })}
-                        aria-label={fill(m.keys.switchTo, { name: profile.name })}
-                        disabled={Boolean(busy)}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onApply(profile.id, [...profile.targets]);
-                        }}
+                      <label
+                        className="keyring-routing-toggle"
+                        title={profile.routing.enabled ? m.keys.routingEnabled : m.keys.routingDisabled}
+                        onClick={(event) => event.stopPropagation()}
                       >
-                        {applying
-                          ? <LoaderCircle size={12} className="spin" />
-                          : <Zap size={12} fill={inUse ? "currentColor" : "none"} className={inUse ? "tier-good" : ""} />}
-                        {m.keys.assign}
-                      </button>
+                        <input
+                          type="checkbox"
+                          checked={profile.routing.enabled}
+                          disabled={Boolean(busy)}
+                          aria-label={`${profile.routing.enabled ? m.keys.routingEnabled : m.keys.routingDisabled}: ${profile.name}`}
+                          onChange={(event) => void onUpdateRouting(profile.id, {
+                            ...profile.routing,
+                            enabled: event.target.checked,
+                          })}
+                        />
+                        <span className={`kd-switch ${profile.routing.enabled ? "checked" : ""}`} aria-hidden="true"><span /></span>
+                      </label>
+                      {routingMode === "assignment" && (
+                        <button
+                          type="button"
+                          className="ghost-pill keyring-assign"
+                          title={inUse ? m.keys.inUseHint : fill(m.keys.switchTo, { name: profile.name })}
+                          aria-label={fill(m.keys.switchTo, { name: profile.name })}
+                          disabled={Boolean(busy)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onApply(profile.id, [...profile.targets]);
+                          }}
+                        >
+                          {applying
+                            ? <LoaderCircle size={12} className="spin" />
+                            : <Zap size={12} fill={inUse ? "currentColor" : "none"} className={inUse ? "tier-good" : ""} />}
+                          {m.keys.assign}
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="icon-ghost"
@@ -886,11 +937,51 @@ export function KeyringView({
                               </div>
                             ))}
                           </div>
-                          {profile.availableModels.length > 0 && (
-                            <div className="model-chips">
-                              {profile.availableModels.map((model) => (
-                                <code key={model}><ModelName value={model} /></code>
-                              ))}
+                          {availableModels.length > 0 && (
+                            <div className="model-selection">
+                              <div className="model-selection-head">
+                                <span>{m.keys.routingEnabled}</span>
+                                <button
+                                  type="button"
+                                  className="icon-text-button"
+                                  disabled={Boolean(busy)}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void onUpdateRouting(profile.id, {
+                                      ...profile.routing,
+                                      enabledModels: allModelsSelected ? [] : availableModels,
+                                    });
+                                  }}
+                                >
+                                  {allModelsSelected ? m.keys.clearModels : m.keys.selectAllModels}
+                                </button>
+                              </div>
+                              <div className="model-chips">
+                                {availableModels.map((model) => {
+                                  const selected = selectedModels.has(model);
+                                  return (
+                                    <button
+                                      type="button"
+                                      className={`model-chip ${selected ? "selected" : ""}`}
+                                      aria-pressed={selected}
+                                      key={model}
+                                      disabled={Boolean(busy)}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        const nextModels = new Set(selectedModels);
+                                        if (selected) nextModels.delete(model);
+                                        else nextModels.add(model);
+                                        void onUpdateRouting(profile.id, {
+                                          ...profile.routing,
+                                          enabledModels: [...nextModels],
+                                        });
+                                      }}
+                                    >
+                                      <ModelName value={model} />
+                                    </button>
+                                  );
+                                })}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -930,6 +1021,74 @@ export function KeyringView({
                                 </span>
                               ))}
                             </dd>
+                            {routingMode === "assignment" && onSettingsChange && (
+                              <>
+                                <dt>{m.status.failover}</dt>
+                                <dd>
+                                  <span className="keyring-failover" aria-label={m.status.failoverCandidates}>
+                                    {profile.targets.map((target) => {
+                                      const targetSettings = settings.failover[target];
+                                      const allowed = Boolean(targetSettings?.profileIds.includes(profile.id));
+                                      return (
+                                        <label key={target} className={allowed ? "selected" : ""}>
+                                          <input
+                                            type="checkbox"
+                                            checked={allowed}
+                                            disabled={Boolean(busy)}
+                                            onChange={(event) => setFailoverCandidate(
+                                              profile,
+                                              target,
+                                              event.target.checked,
+                                            )}
+                                          />
+                                          {CLIENT_META[target].short}
+                                        </label>
+                                      );
+                                    })}
+                                  </span>
+                                </dd>
+                              </>
+                            )}
+                            {routingMode === "weighted" && (
+                              <>
+                                <dt>{m.keys.weight}</dt>
+                                <dd>
+                                  <input
+                                    className="routing-number"
+                                    type="number"
+                                    min={0}
+                                    max={1000000}
+                                    step={1}
+                                    defaultValue={profile.routing.weight}
+                                    key={`${profile.id}:${profile.routing.weight}`}
+                                    disabled={Boolean(busy)}
+                                    onBlur={(event) => {
+                                      const weight = Number(event.currentTarget.value);
+                                      if (!Number.isFinite(weight)) return;
+                                      void onUpdateRouting(profile.id, {
+                                        ...profile.routing,
+                                        weight: Math.max(0, Math.min(1000000, Math.round(weight))),
+                                      });
+                                    }}
+                                  />
+                                </dd>
+                                <dt>{m.keys.autoDisableOnFailure}</dt>
+                                <dd>
+                                  <label className="inline-switch">
+                                    <input
+                                      type="checkbox"
+                                      checked={profile.routing.autoDisableOnFailure}
+                                      disabled={Boolean(busy)}
+                                      onChange={(event) => void onUpdateRouting(profile.id, {
+                                        ...profile.routing,
+                                        autoDisableOnFailure: event.target.checked,
+                                      })}
+                                    />
+                                    <span className={`kd-switch ${profile.routing.autoDisableOnFailure ? "checked" : ""}`} aria-hidden="true"><span /></span>
+                                  </label>
+                                </dd>
+                              </>
+                            )}
                             {/*
                               Token 拆解。READ 是缓存命中（便宜），WRITE 是缓存写入
                               （1.25× 计费）；REASONING 已含在输出里，单列只为看清钱花在哪。

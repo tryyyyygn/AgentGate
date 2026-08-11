@@ -31,8 +31,10 @@ describe('SettingsService', () => {
       startGatewayOnLaunch: true,
       theme: 'system',
       language: 'system',
+      routing: { mode: 'assignment', strategy: 'fixed' },
       failover: {
         claude: { enabled: false, profileIds: [] },
+        'claude-desktop': { enabled: false, profileIds: [] },
         codex: { enabled: false, profileIds: [] },
         opencode: { enabled: false, profileIds: [] },
         gemini: { enabled: false, profileIds: [] },
@@ -131,6 +133,7 @@ describe('SettingsService', () => {
 
     expect(result.failover).toEqual({
       claude: { enabled: true, profileIds: [first] },
+      'claude-desktop': { enabled: false, profileIds: [] },
       codex: { enabled: false, profileIds: [second] },
       opencode: { enabled: false, profileIds: [] },
       gemini: { enabled: false, profileIds: [] },
@@ -211,6 +214,23 @@ describe('SettingsService', () => {
     // 繁体带地区子标签，容易在某处被当成未知值丢掉
     await expect(service.update({ language: 'zh-TW' })).resolves.toMatchObject({ language: 'zh-TW' })
     await expect(service.update({ language: 'klingon' })).rejects.toThrow()
+  })
+
+  it('保存路由模式和权重策略而不改动旧故障切换配置', async () => {
+    const initial = defaultSettings()
+    initial.failover.codex = { enabled: true, profileIds: [] }
+    const service = new SettingsService({
+      store: memoryStore(initial),
+      app: { setLoginItemSettings: vi.fn() },
+    })
+    await service.initialize()
+
+    const result = await service.update({
+      routing: { mode: 'weighted', strategy: 'adaptive' },
+    })
+
+    expect(result.routing).toEqual({ mode: 'weighted', strategy: 'adaptive' })
+    expect(result.failover.codex).toEqual({ enabled: true, profileIds: [] })
   })
 
   it('原子保存局部设置并同步 Windows 登录项', async () => {

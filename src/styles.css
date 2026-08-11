@@ -68,23 +68,10 @@
 
   /* 中日文字形。默认取雅黑；繁体换正黑、日文换 Yu Gothic（见文件下方的 html[lang]）。 */
   --cjk: "Microsoft YaHei UI", "Microsoft YaHei";
-  /*
-   * 三套拉丁字面（衬线 / 无衬线 / 等宽）共用同一套 CJK 字形。
-   *
-   * --serif 原本没有 CJK 回退，中文一路掉到泛型 serif——也就是宋体。于是标题、
-   * 方案名、弹窗标题的中文是宋体，而设置页（--sans）的中文是雅黑，同一个界面里
-   * 冒出两种中文字体。CJK 界面不该有三套中文字形，统一交给 --cjk。
-   */
+  /* 主要信息：方案名、模型名、状态主字使用衬线；中文共用同一套 CJK 回退。 */
   --serif: "EB Garamond", Georgia, var(--cjk), "Times New Roman", serif;
+  /* 次要信息：恢复原来的无衬线与等宽仪表字体。 */
   --sans: "IBM Plex Sans", var(--cjk), "Segoe UI", system-ui, sans-serif;
-  /*
-   * CJK 字体必须排在 monospace 泛型之前。
-   *
-   * 界面里大量文字用 --mono，而 IBM Plex Mono 没有中日文字形。若栈里只剩泛型
-   * monospace 兜底，中日文就会落到 Windows 的默认等宽字体——宋体。宋体在 12px
-   * 以下是点阵化的细笔画，配上字距几乎无法辨认，这正是「看不清」的根因。
-   * 拉丁字符仍由 IBM Plex Mono 先接住，等宽观感不受影响。
-   */
   --mono: "IBM Plex Mono", "Cascadia Mono", Consolas, var(--cjk), ui-monospace, monospace;
 
   /*
@@ -769,7 +756,8 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 /* ---------- 客户端铭牌 ---------- */
 .socket-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* 保持卡片原有宽度，放不下就换行（默认窗口 4+1，最小宽度 3+2） */
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 8px;
   margin-top: 11px;
 }
@@ -884,7 +872,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   letter-spacing: .1em;
   color: var(--ink-soft);
 }
-.socket-title svg { display: none; }
+.socket-title svg:not(.client-icon) { display: none; }
 .socket-title small {
   flex: 0 0 auto;
   color: var(--ink-quiet);
@@ -1194,7 +1182,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 
 .keyring-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 122px;
+  grid-template-columns: minmax(0, 1fr) 166px;
   gap: 12px;
   align-items: center;
   min-height: 62px;
@@ -1202,7 +1190,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 }
 .keyring-open {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 84px 140px 192px;
+  grid-template-columns: 28px minmax(0, 1fr) 84px 140px 96px;
   gap: 12px;
   align-items: center;
   min-width: 0;
@@ -1323,7 +1311,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .keyring-stat strong.warn { color: var(--warn); }
 .keyring-stat strong.bad { color: var(--bad); }
 .keyring-stat strong.unknown { color: var(--ink-quiet); }
-.keyring-tools { display: flex; align-items: center; justify-content: flex-end; gap: 2px; width: 122px; }
+.keyring-tools { display: flex; align-items: center; justify-content: flex-end; gap: 2px; width: 166px; }
 .keyring-tools > svg { color: var(--ink-quiet); }
 .keyring-assign { height: 26px; padding: 0 8px; font-size: var(--fs-label); }
 .icon-ghost {
@@ -1382,7 +1370,71 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   color: var(--ink-quiet);
 }
 
-.model-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.model-selection { margin-top: 8px; }
+.model-selection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  color: var(--ink-quiet);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+.icon-text-button {
+  padding: 0;
+  color: var(--accent-ink);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+}
+.icon-text-button:hover:not(:disabled) { color: var(--ink); }
+.icon-text-button:disabled { opacity: .5; cursor: default; }
+.model-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.model-chip {
+  padding: 2px 6px;
+  color: var(--ink-soft);
+  background: var(--soft);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  text-align: left;
+}
+.model-chip:hover:not(:disabled) { border-color: var(--accent); }
+.model-chip.selected {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.model-chip:disabled { opacity: .5; cursor: default; }
+.keyring-routing-toggle {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.keyring-routing-toggle input,
+.inline-switch input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.keyring-routing-toggle .kd-switch { transform: scale(.78); transform-origin: center; }
+.routing-number {
+  width: 86px;
+  height: 24px;
+  padding: 0 6px;
+  color: var(--ink);
+  background: var(--soft);
+  border: 1px solid var(--line-strong);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.routing-number:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+.routing-number:disabled { opacity: .5; }
 .model-chips code {
   padding: 2px 6px;
   color: var(--ink-soft);
@@ -1404,6 +1456,23 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .keyring-facts dt { color: var(--ink-quiet); letter-spacing: .06em; }
 .keyring-facts dd { margin: 0; color: var(--ink-soft); }
 .keyring-facts dd.with-copy { display: flex; align-items: center; gap: 5px; }
+.keyring-failover { display: flex; flex-wrap: wrap; gap: 3px; }
+.keyring-failover label {
+  padding: 2px 5px;
+  color: var(--ink-quiet);
+  background: var(--soft);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+}
+.keyring-failover label.selected {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.keyring-failover input { position: absolute; opacity: 0; pointer-events: none; }
+.keyring-failover label:has(input:disabled) { opacity: .5; cursor: default; }
 .icon-mini {
   display: grid;
   place-items: center;
@@ -1588,7 +1657,8 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .status-row-name strong {
   display: block;
   color: var(--ink);
-  font-size: var(--fs-sm);
+  font-family: var(--serif);
+  font-size: var(--fs-md);
   font-weight: 600;
 }
 .status-row-model-cell { min-width: 0; }
@@ -1601,8 +1671,8 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   color: var(--ink-soft);
   background: var(--card);
   border: 1px solid var(--line);
-  font-family: var(--mono);
-  font-size: var(--fs-label);
+  font-family: var(--serif);
+  font-size: var(--fs-md);
   cursor: pointer;
 }
 .status-row-model:hover:not(:disabled),
@@ -1905,7 +1975,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .request-row {
   display: grid;
   /* 传输模式和推理强度独立成列，Token 列保持 C/W/R 三个读数不换行。 */
-  grid-template-columns: 20px minmax(128px, 1fr) 58px minmax(92px, .62fr) 66px minmax(158px, .88fr) 62px 88px 96px;
+  grid-template-columns: 20px minmax(128px, 1fr) 58px minmax(108px, .62fr) 76px minmax(158px, .88fr) 62px 92px 76px;
   gap: 11px;
   align-items: center;
   min-height: 56px;
@@ -1924,6 +1994,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 
 .request-main { min-width: 0; }
 .request-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.request-title .tag-client { margin-left: auto; }
 .request-title strong {
   flex: 0 1 auto;
   min-width: 60px;
@@ -1952,10 +2023,39 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
+  font-family: var(--serif);
+  font-size: var(--fs-md);
+  font-weight: 500;
   color: var(--ink);
 }
+.request-model code.model-mapped {
+  font-size: var(--fs-xs);
+  color: var(--ink-quiet);
+}
+
+/* 客户端品牌徽标 */
+.client-icon { display: inline-block; vertical-align: -2px; }
+.client-icon-badge {
+  fill: currentColor;
+  /* 描边取卡片/行底色，形成挖空轮廓让角标从主图标里“切”出来 */
+  stroke: var(--card);
+  stroke-width: 1.6;
+}
+.socket-title strong { display: inline-flex; align-items: center; gap: 5px; }
+.socket-kind {
+  color: var(--ink-quiet);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-style: normal;
+  letter-spacing: .08em;
+}
+.tag-client .client-icon { vertical-align: -1px; }
+.target-copy strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .request-transport { min-width: 0; white-space: nowrap; }
 .request-transport strong {
   display: block;
@@ -1973,8 +2073,8 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   display: block;
   overflow: hidden;
   color: var(--ink);
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
+  font-family: var(--serif);
+  font-size: var(--fs-md);
   font-weight: 600;
   letter-spacing: .04em;
   text-overflow: ellipsis;
@@ -2653,6 +2753,61 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   justify-content: space-between;
   gap: 10px;
   margin-top: 7px;
+}
+
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.preset-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.preset-chip {
+  height: 26px;
+  padding: 0 10px;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 13px;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.preset-chip:hover { filter: brightness(1.05); }
+
+.route-table { display: grid; gap: 5px; }
+.route-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 0.7fr) 30px 24px;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 2px 4px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+}
+.route-row.route-head {
+  min-height: 0;
+  padding: 0 4px;
+  background: transparent;
+  border: 0;
+  color: var(--ink-quiet);
+  font-size: var(--fs-xs);
+}
+.route-row input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 7px;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  outline: 0;
+  font-size: var(--fs-sm);
+}
+.route-row input:focus { border-color: var(--accent); }
+.route-1m {
+  display: grid;
+  place-items: center;
+  cursor: pointer;
 }
 .add-url-pill {
   display: inline-flex;

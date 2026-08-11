@@ -28,7 +28,7 @@ export const PROTOCOL_META: Record<Protocol, ProtocolMeta> = {
     label: "Anthropic Messages",
     short: "Anthropic",
     tone: "accent",
-    compatible: ["claude", "opencode"],
+    compatible: ["claude", "claude-desktop", "opencode"],
   },
   "openai-responses": {
     label: "OpenAI Responses",
@@ -51,7 +51,12 @@ export const PROTOCOL_META: Record<Protocol, ProtocolMeta> = {
 };
 
 export const CLIENT_META: Record<ClientTarget, ClientMeta> = {
-  claude: { label: "Claude Code", short: "Claude", tone: "accent" },
+  claude: { label: "Claude Code", short: "CLI", tone: "accent" },
+  "claude-desktop": {
+    label: "Claude Desktop",
+    short: "Desktop",
+    tone: "accent",
+  },
   codex: { label: "Codex", short: "Codex", tone: "good" },
   opencode: { label: "OpenCode", short: "OpenCode", tone: "violet" },
   gemini: { label: "Gemini CLI", short: "Gemini", tone: "blue" },
@@ -59,6 +64,7 @@ export const CLIENT_META: Record<ClientTarget, ClientMeta> = {
 
 export const CLIENT_TARGET_ORDER: ClientTarget[] = [
   "claude",
+  "claude-desktop",
   "codex",
   "opencode",
   "gemini",
@@ -70,8 +76,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   startGatewayOnLaunch: true,
   theme: "system",
   language: "system",
+  routing: { mode: "assignment", strategy: "fixed" },
   failover: {
     claude: { enabled: false, profileIds: [] },
+    "claude-desktop": { enabled: false, profileIds: [] },
     codex: { enabled: false, profileIds: [] },
     opencode: { enabled: false, profileIds: [] },
     gemini: { enabled: false, profileIds: [] },
@@ -96,6 +104,7 @@ export const EMPTY_BOOTSTRAP: BootstrapData = {
     profiles: {},
     failover: {
       claude: { enabled: false, failureCount: 0, failureThreshold: 3, reason: "idle", excluded: [], history: [] },
+      "claude-desktop": { enabled: false, failureCount: 0, failureThreshold: 3, reason: "idle", excluded: [], history: [] },
       codex: { enabled: false, failureCount: 0, failureThreshold: 3, reason: "idle", excluded: [], history: [] },
       opencode: { enabled: false, failureCount: 0, failureThreshold: 3, reason: "idle", excluded: [], history: [] },
       gemini: { enabled: false, failureCount: 0, failureThreshold: 3, reason: "idle", excluded: [], history: [] },
@@ -111,6 +120,7 @@ export const BLANK_PROFILE_INPUT: SaveProfileInput = {
   endpoints: [{ url: "" }],
   apiKey: "",
   model: "",
+  modelRoutes: {},
   authMode: "bearer",
   targets: ["codex"],
   enableToolSearch: false,
@@ -119,3 +129,29 @@ export const BLANK_PROFILE_INPUT: SaveProfileInput = {
     intervalMinutes: 2,
   },
 };
+
+export interface ProfilePreset {
+  id: string;
+  /** i18n 文案键在 messages.ts 的 editor.presets 下。 */
+  input: Partial<SaveProfileInput> & Pick<SaveProfileInput, "protocol" | "baseUrl" | "authMode" | "targets">;
+}
+
+const KIMI_CODING_MODEL_ROUTES: SaveProfileInput["modelRoutes"] = {
+  "claude-sonnet-5": { model: "k3", labelOverride: "k3", supports1m: true },
+  "claude-opus-4-8": { model: "k3", labelOverride: "k3", supports1m: true },
+  "claude-haiku-4-5": { model: "k3", labelOverride: "k3", supports1m: true },
+  "claude-fable-5": { model: "k3", labelOverride: "k3", supports1m: true },
+};
+
+export const PROFILE_PRESETS: ProfilePreset[] = [{
+  id: "kimi-coding",
+  input: {
+    name: "Kimi For Coding",
+    protocol: "anthropic",
+    baseUrl: "https://api.kimi.com/coding",
+    model: "k3",
+    modelRoutes: KIMI_CODING_MODEL_ROUTES,
+    authMode: "bearer",
+    targets: ["claude", "claude-desktop"],
+  },
+}];

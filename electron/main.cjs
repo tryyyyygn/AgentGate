@@ -116,7 +116,7 @@ function createServices() {
   const profileStore = new JsonFileStore(
     path.join(dataDirectory, PROFILE_STORE_FILE),
     ProfileStoreSchema,
-    () => ({ version: 3, groups: [], profiles: [] }),
+    () => ({ version: 4, groups: [], profiles: [] }),
   )
   const historyStore = new JsonFileStore(
     path.join(dataDirectory, HISTORY_STORE_FILE),
@@ -199,6 +199,7 @@ function createServices() {
     store: gatewayStore,
     vault,
     requestMonitor,
+    getRoutingSettings: () => settingsService?.getPublicSettings().routing,
     onStateChanged: (event) => {
       autoSwitchService?.resetFailoverFailures()
       // 托盘常驻，即使窗口已隐藏或销毁也要反映网关状态。
@@ -227,7 +228,8 @@ function createServices() {
     store: settingsStore,
     app,
     getProfileIds: () => profileService.list().then((profiles) => profiles.map((profile) => profile.id)),
-    onChanged: (settings) => {
+    onChanged: async (settings) => {
+      await gatewayService.refreshRouting()
       autoSwitchService?.resetFailoverFailures()
       if (!mainWindow || mainWindow.isDestroyed()) return
       mainWindow.webContents.send(CHANNELS.stateChanged, {

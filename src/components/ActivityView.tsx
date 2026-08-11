@@ -13,6 +13,7 @@ import { formatDuration, formatTokenCount, formatTokenCountFull } from "../lib/f
 import { cacheRateTier, responseLatencyTier } from "../lib/health";
 import { RollingNumber } from "./RollingNumber";
 import { ModelName } from "./ModelName";
+import { ClientIcon } from "./ClientIcon";
 import type { ActiveRequest, ClientTarget } from "../types";
 import type { RequestFilter } from "../ui-types";
 
@@ -148,17 +149,6 @@ const RequestRow = memo(function RequestRow({
   const tokens = request.tokenUsage;
   const uncachedInput = uncachedInputTokens(tokens);
   const rate = cacheRate(request);
-  // 行里是缩写，悬停补充口径
-  const tokenBreakdown = tokens
-    ? [
-      `↓ ${m.stream.tipIn} ${formatTokenCountFull(uncachedInput)}`,
-      `↑ ${m.stream.tipOut} ${formatTokenCountFull(tokens.outputTokens)}`,
-      `C ${m.stream.tipCache} ${formatTokenCount(tokens.cachedTokens)}`,
-      `W ${m.stream.tipWrite} ${formatTokenCount(tokens.cacheWriteTokens)}`,
-      `R ${m.stream.tipReason} ${formatTokenCountFull(tokens.reasoningTokens)}`,
-    ].join("\n")
-    : undefined;
-
   return (
     <article className="request-row">
       <span
@@ -171,8 +161,14 @@ const RequestRow = memo(function RequestRow({
       <span className="request-main">
         <span className="request-title">
           <strong>{request.profileName}</strong>
-          <small className={`tag-client ${clientTone(request.client)}`}>
-            {clientLabel(request.client)}
+          <small
+            className={`tag-client ${clientTone(request.client)}`}
+            title={clientLabel(request.client)}
+          >
+            {request.client in CLIENT_META
+              ? <ClientIcon target={request.client as ClientTarget} size={12} />
+              : String(request.client)}
+            <span className="sr-only">{clientLabel(request.client)}</span>
           </small>
         </span>
       </span>
@@ -180,7 +176,14 @@ const RequestRow = memo(function RequestRow({
         <strong>{transport ?? "———"}</strong>
       </span>
       <span className="request-model">
-        <code data-hint={request.model}><ModelName value={request.model} /></code>
+        {request.upstreamModel && request.upstreamModel !== request.model ? (
+          <>
+            <code><ModelName value={request.upstreamModel} /></code>
+            <code className="model-mapped">← <ModelName value={request.model} /></code>
+          </>
+        ) : (
+          <code><ModelName value={request.model} /></code>
+        )}
       </span>
       <span className="request-reasoning">
         <strong>{reasoning}</strong>
@@ -190,12 +193,7 @@ const RequestRow = memo(function RequestRow({
           <RollingNumber className="tok-in" value={`↓${formatTokenCountFull(uncachedInput)}`} />
           <RollingNumber className="tok-out" value={`↑${formatTokenCountFull(tokens?.outputTokens)}`} />
         </span>
-        {/*
-          四个口径一起列，谁也不顶替谁。
-          C 是缓存命中（便宜），W 是缓存写入（按 1.25× 计费，最贵的一次），
-          R 是推理 token——它已经含在 ↑ 输出里了，单列只为让你看见钱花在哪。
-        */}
-        <small className="tok-detail" data-hint={tokenBreakdown}>
+        <small className="tok-detail">
           <RollingNumber as="span" className="tok-cache" value={`C ${formatTokenCount(tokens?.cachedTokens)}`} />
           <RollingNumber as="span" className="tok-write" value={`W ${formatTokenCount(tokens?.cacheWriteTokens)}`} />
           <RollingNumber as="span" className="tok-reason" value={`R ${formatTokenCountFull(tokens?.reasoningTokens)}`} />

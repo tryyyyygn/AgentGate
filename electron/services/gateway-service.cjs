@@ -2,8 +2,15 @@ const crypto = require('node:crypto')
 const http = require('node:http')
 const https = require('node:https')
 const { pipeline, Transform } = require('node:stream')
+const zlib = require('node:zlib')
 const { parser: createJsonParser } = require('stream-json')
 const { z } = require('zod')
+let http2Wrapper
+try {
+  http2Wrapper = require('http2-wrapper')
+} catch {
+  // 旧的开发目录可能还没有安装可选传输依赖；HTTPS/1.1 仍可工作。
+}
 const { TARGETS } = require('./schemas.cjs')
 const { SerialExecutor } = require('./storage.cjs')
 const {
@@ -30,6 +37,14 @@ const RESPONSES_FALLBACK_BODY_LIMIT_BYTES = 32 * 1024 * 1024
 const RESPONSES_FALLBACK_BODY_SLOTS = 4
 const RESPONSES_FALLBACK_IDLE_TIMEOUT_MS = 5 * 60_000
 const RESPONSES_FALLBACK_TOTAL_TIMEOUT_MS = 30 * 60_000
+const WEIGHTED_MODEL_BODY_LIMIT_BYTES = 32 * 1024 * 1024
+const WEIGHTED_COOLDOWN_MS = 30_000
+const WEIGHTED_RATE_LIMIT_COOLDOWN_MS = 10_000
+const WEIGHTED_MODEL_FAILURE_COOLDOWN_MS = 60_000
+const WEIGHTED_FAILURE_THRESHOLD = 3
+const CODEX_HTTP2_MAX_FREE_SESSIONS = 10
+const CODEX_GZIP_MIN_BYTES = 64 * 1024
+const CODEX_GZIP_HOSTNAMES = new Set(['lucen.cc', 'lucen.plus'])
 const TRANSFORMED_RESPONSE_INVALIDATED_HEADERS = [
   'content-length',
   'etag',
@@ -44,7 +59,8 @@ const AGGREGATED_RESPONSE_INVALIDATED_HEADERS = [
 ]
 const MAX_MODEL_METADATA_LENGTH = 240
 const MAX_REASONING_METADATA_LENGTH = 32
-const GATEWAY_VERSION = 4
+const MINIMAL_CODEX_INSTRUCTIONS = 'You are a helpful coding assistant.'
+const GATEWAY_VERSION = 5
 const TARGET_SET = new Set(TARGETS)
 const ProfileIdSchema = z.string().trim().uuid()
 const HOP_BY_HOP_HEADERS = new Set([
@@ -62,6 +78,42 @@ const CREDENTIAL_HEADERS = new Set([
   'x-api-key',
   'x-goog-api-key',
 ])
+const CODEX_HTTPS_AGENT = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 1_000,
+  maxSockets: LOCAL_MAX_CONNECTIONS,
+  maxFreeSockets: 16,
+})
+const CODEX_HTTP2_AGENT = http2Wrapper?.Agent
+  ? new http2Wrapper.Agent({
+      maxFreeSessions: CODEX_HTTP2_MAX_FREE_SESSIONS,
+      timeout: LOCAL_REQUEST_TIMEOUT_MS,
+    })
+  : undefined
+
+function codexHttp2ProtocolCacheKey(destination) {
+  return `${destination.hostname}:${destination.port || 443}:h2,http/1.1`
+}
+
+async function prewarmCodexHttp2Session(destination) {
+  if (destination.protocol !== 'https:'
+    || !CODEX_HTTP2_AGENT?.getSession
+    || !http2Wrapper?.auto) {
+    return false
+  }
+  const protocolCache = http2Wrapper.auto.protocolCache
+  const cacheKey = codexHttp2ProtocolCacheKey(destination)
+  if (protocolCache?.get?.(cacheKey) === 'http/1.1') return false
+  try {
+    await CODEX_HTTP2_AGENT.getSession(destination.origin, {
+      servername: destination.hostname,
+    })
+    protocolCache?.set?.(cacheKey, 'h2')
+    return true
+  } catch {
+    return false
+  }
+}
 
 function createRequestMetadataTap(onMetadata) {
   const jsonParser = createJsonParser({ packStrings: false })
@@ -192,6 +244,12 @@ const CanonicalGatewayStoreSchema = z.object({
 function migrateGatewayStore(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return defaultGatewayStore()
   const routes = routeRecord(value)
+  // v5 拆分出 claude-desktop 之前，claude 一个目标同时服务 CLI 和桌面端。
+  // 只有老库才继承分配与接管状态；新库允许两个目标独立接管。
+  const inheritDesktop = !Number.isInteger(value.version) || value.version < 5
+  if (inheritDesktop && routes.claude && !routes['claude-desktop']) {
+    routes['claude-desktop'] = routes.claude
+  }
   const explicitTargets = Array.isArray(value.targets)
     ? value.targets.filter((target) => TARGET_SET.has(target))
     : []
@@ -204,10 +262,18 @@ function migrateGatewayStore(value) {
     ? value.engaged.filter((target) => TARGET_SET.has(target))
     : enabled ? targets : []
   ).filter((target) => targetSet.has(target))
+  if (inheritDesktop && engaged.includes('claude') && !engaged.includes('claude-desktop')) {
+    engaged.push('claude-desktop')
+  }
   const resumeTargets = (Array.isArray(value.resumeTargets)
     ? value.resumeTargets.filter((target) => TARGET_SET.has(target))
-    : engaged
+    : [...engaged]
   ).filter((target) => targetSet.has(target))
+  if (inheritDesktop
+    && resumeTargets.includes('claude')
+    && !resumeTargets.includes('claude-desktop')) {
+    resumeTargets.push('claude-desktop')
+  }
   const normalized = {
     version: GATEWAY_VERSION,
     enabled,
@@ -387,6 +453,7 @@ function stripHeaders(headers, extra = []) {
   }
   const result = {}
   for (const [name, value] of Object.entries(headers)) {
+    if (name.startsWith(':')) continue
     if (value !== undefined && !blocked.has(name.toLowerCase())) result[name] = value
   }
   return result
@@ -492,22 +559,135 @@ function anthropicCountErrorSupportsFallback(statusCode) {
   return statusCode === 501
 }
 
-function forceResponsesStreaming(body) {
+function prepareResponsesRequest(body) {
   try {
     const payload = JSON.parse(body.toString('utf8'))
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
-      || payload.stream === true) {
-      return { body, changed: false }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return { body, streamingForced: false }
     }
-    payload.stream = true
+    let changed = false
+    const streamingForced = payload.stream !== true
+    if (streamingForced) {
+      payload.stream = true
+      changed = true
+    }
+    if (typeof payload.instructions !== 'string' || !payload.instructions.trim()) {
+      payload.instructions = MINIMAL_CODEX_INSTRUCTIONS
+      changed = true
+    }
     return {
-      body: Buffer.from(JSON.stringify(payload), 'utf8'),
-      changed: true,
+      body: changed ? Buffer.from(JSON.stringify(payload), 'utf8') : body,
+      streamingForced,
     }
   } catch {
     // 已经消费了请求体时，仍把原字节交给上游；只有可确认的 JSON 才改写。
-    return { body, changed: false }
+    return { body, streamingForced: false }
   }
+}
+
+/**
+ * 查映射条目：先精确匹配；Claude 模型带 -YYYYMMDD 日期后缀的变体
+ * （如 claude-haiku-4-5-20251001）归并到主档位条目。
+ */
+function lookupModelRoute(routes, model) {
+  if (!routes || typeof routes !== 'object' || typeof model !== 'string') return undefined
+  const direct = routes[model]
+  if (direct) return direct
+  const stripped = model.replace(/-\d{8}$/, '')
+  return stripped !== model ? routes[stripped] : undefined
+}
+
+/**
+ * 按方案的模型映射改写请求体顶层的 model。未命中、非 JSON 或映射值不变时
+ * 返回 undefined，调用方继续转发原字节——不为改写而改写，避免无谓的重序列化。
+ */
+function rewriteRequestModel(body, routes) {
+  if (!routes || typeof routes !== 'object') return undefined
+  let payload
+  try {
+    payload = JSON.parse(body.toString('utf8'))
+  } catch {
+    return undefined
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined
+  if (typeof payload.model !== 'string' || !payload.model) return undefined
+  const route = lookupModelRoute(routes, payload.model)
+  const upstreamModel = typeof route?.model === 'string' ? route.model.trim() : ''
+  if (!upstreamModel || upstreamModel === payload.model) return undefined
+  payload.model = upstreamModel
+  return { body: Buffer.from(JSON.stringify(payload), 'utf8'), model: upstreamModel }
+}
+
+function compressCodexRequestBodyForUpstream(destination, body) {
+  if (destination?.protocol !== 'https:'
+    || !CODEX_GZIP_HOSTNAMES.has(destination.hostname.toLowerCase())
+    || !Buffer.isBuffer(body)
+    || body.length < CODEX_GZIP_MIN_BYTES) {
+    return { body, contentEncoding: undefined }
+  }
+  try {
+    const compressed = zlib.gzipSync(body, { level: zlib.constants.Z_BEST_SPEED })
+    return compressed.length < body.length
+      ? { body: compressed, contentEncoding: 'gzip' }
+      : { body, contentEncoding: undefined }
+  } catch {
+    return { body, contentEncoding: undefined }
+  }
+}
+
+function isCodexResponsesRequest(target, profile, suffix, method) {
+  const normalizedSuffix = suffix.replace(/\/+$/, '') || '/'
+  return target === 'codex'
+    && profile?.protocol === 'openai-responses'
+    && method === 'POST'
+    && normalizedSuffix === '/responses'
+}
+
+async function createUpstreamRequest(destination, options, useCodexTransport) {
+  if (useCodexTransport && destination.protocol === 'https:' && http2Wrapper?.auto) {
+    // auto() 的首次 H2 请求会先做一次 ALPN 探测，再另建真正的 H2 会话。
+    // 先复用/建立 Agent 会话并写入协议缓存，避免首个 Codex 请求支付两次 TLS 建链。
+    await prewarmCodexHttp2Session(destination)
+    return http2Wrapper.auto(destination, {
+      ...options,
+      agent: {
+        https: CODEX_HTTPS_AGENT,
+        http2: CODEX_HTTP2_AGENT || http2Wrapper.globalAgent,
+      },
+    })
+  }
+  const transport = destination.protocol === 'https:' ? https : http
+  return transport.request(destination, {
+    ...options,
+    ...(useCodexTransport && destination.protocol === 'https:'
+      ? { agent: CODEX_HTTPS_AGENT }
+      : {}),
+  })
+}
+
+function extractRequestModel(target, suffix, body) {
+  if (target === 'gemini') {
+    const match = /\/models\/([^/:?]+)/.exec(suffix || '')
+    if (match?.[1]) {
+      try { return decodeURIComponent(match[1]) } catch { return match[1] }
+    }
+  }
+  if (!body?.length) return undefined
+  try {
+    const payload = JSON.parse(body.toString('utf8'))
+    return typeof payload?.model === 'string' && payload.model.trim()
+      ? payload.model.trim()
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function percentile(values, percentileValue) {
+  if (values.length === 0) return undefined
+  const sorted = [...values].sort((left, right) => left - right)
+  const index = Math.min(sorted.length - 1, Math.ceil(sorted.length * percentileValue) - 1)
+  return sorted[Math.max(0, index)]
 }
 
 /** 本地回环网关；仅兼容同步 Responses 时需要聚合上游 SSE。 */
@@ -519,6 +699,7 @@ class GatewayService {
     host = DEFAULT_GATEWAY_HOST,
     onStateChanged,
     requestMonitor,
+    getRoutingSettings,
     responsesFallbackIdleTimeoutMs = RESPONSES_FALLBACK_IDLE_TIMEOUT_MS,
     responsesFallbackTotalTimeoutMs = RESPONSES_FALLBACK_TOTAL_TIMEOUT_MS,
   }) {
@@ -531,6 +712,7 @@ class GatewayService {
     this.host = host
     this.onStateChanged = onStateChanged
     this.requestMonitor = requestMonitor
+    this.routingSettingsReader = getRoutingSettings
     this.responsesFallbackIdleTimeoutMs = Number.isFinite(responsesFallbackIdleTimeoutMs)
       && responsesFallbackIdleTimeoutMs > 0
       ? responsesFallbackIdleTimeoutMs
@@ -551,6 +733,12 @@ class GatewayService {
     this.localToken = undefined
     this.routeToken = undefined
     this.connectionCache = new Map()
+    this.weightedSticky = new Map()
+    this.weightedCooldowns = new Map()
+    this.weightedRouteAnchors = new Map()
+    this.weightedMode = false
+    this.weightedAutoDisabled = new Set()
+    this.weightedAutoDisableInFlight = new Set()
     this.anthropicCountFallbacks = new Map()
     this.anthropicCountBodyActive = 0
     this.responsesFallbackBodyActive = 0
@@ -606,13 +794,19 @@ class GatewayService {
         targets: [...new Set([...this.persisted.targets, ...staged])],
       })
     }
+    const weighted = this.isWeightedRouting()
+    if (weighted !== this.weightedMode) {
+      this.weightedMode = weighted
+      this._clearWeightedRuntime()
+    }
     const assigned = new Set(this.persisted.targets)
+    const engageable = weighted ? new Set(TARGETS) : assigned
     const requestedEngaged = normalizeTargets(
       engage ?? targets ?? this.persisted.engaged,
-    ).filter((target) => assigned.has(target))
+    ).filter((target) => engageable.has(target))
     const requestedResumeTargets = normalizeTargets(
       resumeTargets ?? [...new Set([...this.persisted.resumeTargets, ...requestedEngaged])],
-    ).filter((target) => assigned.has(target))
+    ).filter((target) => engageable.has(target))
 
     if (this.server) {
       const currentPort = this.persisted.port
@@ -622,9 +816,13 @@ class GatewayService {
         this.persisted = await this.store.write({
           ...this.persisted,
           enabled: true,
+          targets: weighted
+            ? [...new Set([...this.persisted.targets, ...requestedEngaged])]
+            : this.persisted.targets,
           engaged: requestedEngaged,
           resumeTargets: requestedResumeTargets,
         })
+        if (weighted) await this._prepareWeightedRouteAnchors(requestedEngaged)
         this._evictUnroutedConnections()
         this.status = 'running'
         this.error = undefined
@@ -690,7 +888,9 @@ class GatewayService {
           version: GATEWAY_VERSION,
           enabled: true,
           port: boundPort,
-          targets: this.persisted.targets,
+          targets: weighted
+            ? [...new Set([...this.persisted.targets, ...requestedEngaged])]
+            : this.persisted.targets,
           engaged: requestedEngaged,
           resumeTargets: requestedResumeTargets,
           routes: this.persisted.routes,
@@ -703,6 +903,7 @@ class GatewayService {
         await this._closeServer()
         throw error
       }
+      if (weighted) await this._prepareWeightedRouteAnchors(requestedEngaged)
       await this._preloadRouteConnections()
       this.status = 'running'
       this.startedAt = new Date().toISOString()
@@ -715,6 +916,7 @@ class GatewayService {
       this.localToken = undefined
       this.routeToken = undefined
       this.connectionCache.clear()
+      this._clearWeightedRuntime()
       this._notify()
       throw error
     }
@@ -751,6 +953,7 @@ class GatewayService {
         this.localToken = undefined
         this.routeToken = undefined
         this.connectionCache.clear()
+        this._clearWeightedRuntime()
         this._notify()
       }
       return this.getPublicState()
@@ -779,6 +982,7 @@ class GatewayService {
         this.localToken = undefined
         this.routeToken = undefined
         this.connectionCache.clear()
+        this._clearWeightedRuntime()
         this._notify()
       }
       return this.getPublicState()
@@ -788,13 +992,20 @@ class GatewayService {
   getPublicState() {
     const port = this.persisted.port
     const targets = [...this.persisted.targets]
+    const publicRoutes = this.isWeightedRouting() ? {} : { ...this.persisted.routes }
+    if (this.isWeightedRouting()) {
+      for (const target of this.persisted.engaged) {
+        const profileId = this.weightedRouteAnchors.get(target)
+        if (profileId) publicRoutes[target] = profileId
+      }
+    }
     return {
       status: this.status,
       host: this.host,
       port,
       targets,
       engaged: [...this.persisted.engaged],
-      routes: Object.entries(this.persisted.routes).map(([target, profileId]) => ({
+      routes: Object.entries(publicRoutes).map(([target, profileId]) => ({
         target,
         profileId,
       })),
@@ -905,6 +1116,7 @@ class GatewayService {
       if (this.status === 'running' && this.server
         && this._isProfileEngaged(profileId)) {
         this.connectionCache.set(profileId, connection)
+        if (selected.includes('codex')) this._prewarmCodexConnection(connection)
       }
       this._notify()
       return previous
@@ -992,6 +1204,7 @@ class GatewayService {
         engaged: next,
         resumeTargets: nextResumeTargets,
       })
+      if (this.isWeightedRouting()) await this._prepareWeightedRouteAnchors(next)
       // 放掉客户端后，指向它的方案明文不该继续留在缓存里
       this._evictUnroutedConnections()
       this._notify()
@@ -1004,6 +1217,224 @@ class GatewayService {
       enabled: this.persisted.enabled,
       engaged: [...this.persisted.engaged],
       resumeTargets: [...this.persisted.resumeTargets],
+    }
+  }
+
+  _routingSettings() {
+    let value
+    try {
+      value = typeof this.routingSettingsReader === 'function'
+        ? this.routingSettingsReader()
+        : this.routingSettingsReader
+    } catch {
+      value = undefined
+    }
+    const routing = value?.routing || value || {}
+    return {
+      mode: routing.mode === 'weighted' ? 'weighted' : 'assignment',
+      strategy: routing.strategy === 'adaptive' ? 'adaptive' : 'fixed',
+    }
+  }
+
+  getRoutingMode() {
+    return this._routingSettings().mode
+  }
+
+  isWeightedRouting() {
+    return this.getRoutingMode() === 'weighted'
+  }
+
+  /**
+   * 设置模式运行中发生变化时刷新内存路由状态，不改写客户端配置。
+   *
+   * 固定/自适应策略切换不清掉粘性；只有分配与权重模式切换才重建锚点。
+   */
+  async refreshRouting() {
+    return this.serial.run(async () => {
+      await this._ensureLoaded()
+      const weighted = this.isWeightedRouting()
+      if (weighted === this.weightedMode) return this.getPublicState()
+      this.weightedMode = weighted
+      this._clearWeightedRuntime()
+      if (this.status === 'running' && this.server) {
+        if (weighted) await this._prepareWeightedRouteAnchors(this.persisted.engaged)
+        else await this._preloadRouteConnections()
+        this._evictUnroutedConnections()
+        this._notify()
+      }
+      return this.getPublicState()
+    })
+  }
+
+  _activeEndpoint(profile) {
+    return profile?.endpoints?.find((endpoint) => (
+      endpoint.url?.replace(/\/+$/, '') === profile.baseUrl?.replace(/\/+$/, '')
+    )) || profile?.endpoints?.[0]
+  }
+
+  _profileCanHandle(profile, target, model) {
+    if (!profile?.routing?.enabled || this.weightedAutoDisabled.has(profile.id)) return false
+    if (!Array.isArray(profile.targets) || !profile.targets.includes(target)) return false
+    const endpoint = this._activeEndpoint(profile)
+    if (endpoint?.health?.status === 'unhealthy') return false
+    if (!model) return true
+    const models = new Set(endpoint?.models || [])
+    // 模型映射先把客户端模型翻译成上游模型，再按端点事实与启用列表判断；
+    // 没有映射条目时按原模型判断。粘性键仍按传入模型，见 _weightedRequestKey。
+    const mapped = lookupModelRoute(profile.modelRoutes, model)?.model
+    const effective = typeof mapped === 'string' && mapped.trim() ? mapped.trim() : model
+    return models.has(effective) && (profile.routing.enabledModels || []).includes(effective)
+  }
+
+  _weightedRequestKey(target, model) {
+    return `${target}\0${model || '*'}`
+  }
+
+  _weightedCandidateKey(target, model, profileId) {
+    return `${this._weightedRequestKey(target, model)}\0${profileId}`
+  }
+
+  _canAttemptWeighted(target, model, profileId) {
+    const key = this._weightedCandidateKey(target, model, profileId)
+    const state = this.weightedCooldowns.get(key)
+    if (!state) return true
+    const now = Date.now()
+    if (state.cooldownUntil > now) return false
+    if (state.halfOpenInFlight) return false
+    state.halfOpenInFlight = true
+    return true
+  }
+
+  _adaptiveCandidateScore(profile, target, model) {
+    const records = (typeof this.requestMonitor?.list === 'function'
+      ? this.requestMonitor.list()
+      : [])
+      .filter((entry) => entry.profileId === profile.id
+        && entry.client === target
+        && (!model || entry.model === model)
+        && entry.completedAt)
+      .slice(0, 100)
+    if (records.length === 0) return 0
+    const successes = records.filter((entry) => entry.outcome === 'completed').length
+    const failures = records.length - successes
+    const firstToken = records
+      .map((entry) => entry.firstTokenLatencyMs ?? entry.firstByteLatencyMs)
+      .filter((value) => Number.isFinite(value))
+    const durations = records
+      .map((entry) => entry.durationMs)
+      .filter((value) => Number.isFinite(value))
+    const averageFirstToken = firstToken.length > 0
+      ? firstToken.reduce((total, value) => total + value, 0) / firstToken.length
+      : 60_000
+    const p95 = percentile(durations, 0.95) ?? 60_000
+    const availability = successes / records.length
+    return availability * 1_000_000
+      - failures * 100_000
+      - averageFirstToken
+      - p95 * 0.25
+  }
+
+  async _selectWeightedConnection(target, model) {
+    const profiles = await this.profileService.list()
+    const candidates = profiles
+      .map((profile, index) => ({ profile, index }))
+      .filter(({ profile }) => this._profileCanHandle(profile, target, model))
+    if (candidates.length === 0) {
+      this.weightedRouteAnchors.delete(target)
+      return undefined
+    }
+
+    const requestKey = this._weightedRequestKey(target, model)
+    const stickyId = this.weightedSticky.get(requestKey)
+    const sticky = candidates.find(({ profile }) => profile.id === stickyId)
+    const ordered = sticky
+      ? [sticky, ...candidates.filter((candidate) => candidate !== sticky)]
+      : [...candidates].sort((left, right) => {
+          const weightDelta = (right.profile.routing?.weight ?? 0) - (left.profile.routing?.weight ?? 0)
+          if (weightDelta !== 0) return weightDelta
+          if (this._routingSettings().strategy === 'adaptive') {
+            const scoreDelta = this._adaptiveCandidateScore(right.profile, target, model)
+              - this._adaptiveCandidateScore(left.profile, target, model)
+            if (scoreDelta !== 0) return scoreDelta
+          }
+          return left.index - right.index
+        })
+
+    for (const candidate of ordered) {
+      if (!this._canAttemptWeighted(target, model, candidate.profile.id)) continue
+      this.weightedRouteAnchors.set(target, candidate.profile.id)
+      try {
+        const connection = await this._connection(candidate.profile.id)
+        this.weightedSticky.set(requestKey, candidate.profile.id)
+        return {
+          connection,
+          model,
+          profileId: candidate.profile.id,
+          autoDisableOnFailure: candidate.profile.routing.autoDisableOnFailure,
+        }
+      } catch {
+        if (this.weightedRouteAnchors.get(target) === candidate.profile.id) {
+          this.weightedRouteAnchors.delete(target)
+        }
+        this._recordWeightedOutcome({
+          target,
+          model,
+          profileId: candidate.profile.id,
+          autoDisableOnFailure: candidate.profile.routing.autoDisableOnFailure,
+        }, 'hard-failure')
+      }
+    }
+    this.weightedSticky.delete(requestKey)
+    return undefined
+  }
+
+  _recordWeightedOutcome(attempt, outcome) {
+    if (!attempt?.profileId) return
+    const key = this._weightedCandidateKey(attempt.target, attempt.model, attempt.profileId)
+    if (outcome === 'success') {
+      this.weightedCooldowns.delete(key)
+      return
+    }
+    const now = Date.now()
+    const current = this.weightedCooldowns.get(key) || { hardFailures: 0 }
+    if (outcome === 'hard-failure') {
+      current.hardFailures += 1
+      current.cooldownUntil = now + Math.min(
+        WEIGHTED_COOLDOWN_MS * (2 ** Math.max(0, current.hardFailures - 1)),
+        5 * 60_000,
+      )
+      current.halfOpenInFlight = false
+      this.weightedCooldowns.set(key, current)
+      if (current.hardFailures >= WEIGHTED_FAILURE_THRESHOLD && attempt.autoDisableOnFailure) {
+        void this._autoDisableWeightedProfile(attempt.profileId)
+      }
+      return
+    }
+    current.cooldownUntil = now + (outcome === 'rate-limit'
+      ? WEIGHTED_RATE_LIMIT_COOLDOWN_MS
+      : WEIGHTED_MODEL_FAILURE_COOLDOWN_MS)
+    current.halfOpenInFlight = false
+    this.weightedCooldowns.set(key, current)
+  }
+
+  async _autoDisableWeightedProfile(profileId) {
+    if (this.weightedAutoDisableInFlight.has(profileId)) return
+    this.weightedAutoDisableInFlight.add(profileId)
+    this.weightedAutoDisabled.add(profileId)
+    this._dropWeightedProfile(profileId)
+    try {
+      const profile = (await this.profileService.list()).find((item) => item.id === profileId)
+      if (profile?.routing?.enabled && profile.routing.autoDisableOnFailure) {
+        await this.profileService.updateRouting(profileId, {
+          ...profile.routing,
+          enabled: false,
+        })
+      }
+    } catch {
+      // 运行时熔断不能因为配置同步失败而影响当前请求。
+    } finally {
+      this.weightedAutoDisableInFlight.delete(profileId)
+      this._notify()
     }
   }
 
@@ -1027,7 +1458,10 @@ class GatewayService {
 
   activeTargetsForProfile(profileOrId) {
     const profileId = typeof profileOrId === 'string' ? profileOrId : profileOrId?.id
-    return Object.entries(this.persisted.routes)
+    const routes = this.isWeightedRouting()
+      ? Object.fromEntries(this.weightedRouteAnchors.entries())
+      : this.persisted.routes
+    return Object.entries(routes)
       .filter(([, routedProfileId]) => routedProfileId === profileId)
       .map(([target]) => target)
   }
@@ -1038,17 +1472,31 @@ class GatewayService {
 
   getRouteGroups() {
     const groups = new Map()
-    for (const [target, profileId] of Object.entries(this.persisted.routes)) {
+    const routes = this.isWeightedRouting()
+      ? Object.fromEntries(this.weightedRouteAnchors.entries())
+      : this.persisted.routes
+    for (const [target, profileId] of Object.entries(routes)) {
       if (!groups.has(profileId)) groups.set(profileId, [])
       groups.get(profileId).push(target)
     }
     return [...groups].map(([profileId, targets]) => ({ profileId, targets }))
   }
 
+  async getWeightedCandidates(target) {
+    if (!TARGET_SET.has(target)) return []
+    const profiles = await this.profileService.list()
+    return profiles.filter((profile) => this._profileCanHandle(profile, target))
+  }
+
   async refreshProfile(profileOrId) {
     return this.serial.run(async () => {
       await this._ensureLoaded()
       const profileId = typeof profileOrId === 'string' ? profileOrId : profileOrId?.id
+      if (this.isWeightedRouting() && profileId) {
+        const profile = (await this.profileService.list()).find((item) => item.id === profileId)
+        if (profile?.routing?.enabled) this.weightedAutoDisabled.delete(profileId)
+        else this._dropWeightedProfile(profileId)
+      }
       if (this.status !== 'running'
         || !this.server
         || !profileId
@@ -1092,6 +1540,35 @@ class GatewayService {
     return Object.fromEntries(Object.entries(routeRecord(routes)).filter(([target]) => enabled.has(target)))
   }
 
+  async _prepareWeightedRouteAnchors(targets) {
+    const profiles = await this.profileService.list()
+    const requested = new Set(targets)
+    for (const target of this.weightedRouteAnchors.keys()) {
+      if (!requested.has(target)) this.weightedRouteAnchors.delete(target)
+    }
+    for (const target of targets) {
+      const candidate = profiles
+        .map((profile, index) => ({ profile, index }))
+        .filter(({ profile }) => this._profileCanHandle(profile, target))
+        .sort((left, right) => (
+          (right.profile.routing?.weight ?? 0) - (left.profile.routing?.weight ?? 0)
+          || left.index - right.index
+        ))[0]
+      if (candidate) this.weightedRouteAnchors.set(target, candidate.profile.id)
+      else this.weightedRouteAnchors.delete(target)
+    }
+  }
+
+  _dropWeightedProfile(profileId) {
+    for (const [target, candidateId] of this.weightedRouteAnchors.entries()) {
+      if (candidateId === profileId) this.weightedRouteAnchors.delete(target)
+    }
+    for (const [requestKey, candidateId] of this.weightedSticky.entries()) {
+      if (candidateId === profileId) this.weightedSticky.delete(requestKey)
+    }
+    this.connectionCache.delete(profileId)
+  }
+
   async _preloadRouteConnections() {
     const profileIds = [...new Set(
       this.persisted.engaged.map((target) => this.persisted.routes[target]).filter(Boolean),
@@ -1104,7 +1581,25 @@ class GatewayService {
         this.connectionCache.delete(profileId)
       }
     }))
+    const codexProfileId = this.persisted.engaged.includes('codex')
+      ? this.persisted.routes.codex
+      : undefined
+    const codexConnection = codexProfileId
+      ? this.connectionCache.get(codexProfileId)
+      : undefined
+    if (codexConnection) this._prewarmCodexConnection(codexConnection)
     this._evictUnroutedConnections()
+  }
+
+  _prewarmCodexConnection(connection) {
+    if (connection?.profile?.protocol !== 'openai-responses') return
+    let destination
+    try {
+      destination = new URL(connection.profile.baseUrl)
+    } catch {
+      return
+    }
+    void prewarmCodexHttp2Session(destination)
   }
 
   /**
@@ -1114,17 +1609,32 @@ class GatewayService {
    * 的客户端指向某个方案，它的明文就没有理由继续留在内存里。
    */
   _evictUnroutedConnections() {
-    const liveProfileIds = new Set(
-      this.persisted.engaged
-        .map((target) => this.persisted.routes[target])
-        .filter(Boolean),
-    )
+    if (this.isWeightedRouting()) {
+      const engaged = new Set(this.persisted.engaged)
+      for (const target of this.weightedRouteAnchors.keys()) {
+        if (!engaged.has(target)) this.weightedRouteAnchors.delete(target)
+      }
+      for (const requestKey of this.weightedSticky.keys()) {
+        const target = requestKey.split('\0', 1)[0]
+        if (!engaged.has(target)) this.weightedSticky.delete(requestKey)
+      }
+    }
+    const liveProfileIds = this.isWeightedRouting()
+      ? new Set(this.weightedRouteAnchors.values())
+      : new Set(
+          this.persisted.engaged
+            .map((target) => this.persisted.routes[target])
+            .filter(Boolean),
+        )
     for (const profileId of this.connectionCache.keys()) {
       if (!liveProfileIds.has(profileId)) this.connectionCache.delete(profileId)
     }
   }
 
   _isProfileEngaged(profileId) {
+    if (this.isWeightedRouting()) {
+      return [...this.weightedRouteAnchors.values()].includes(profileId)
+    }
     return this.persisted.engaged.some((target) => this.persisted.routes[target] === profileId)
   }
 
@@ -1133,7 +1643,8 @@ class GatewayService {
     if (cached) return cached
     const connection = await this.profileService.getConnection(profileId)
     if (this.status !== 'running'
-      || !this._isProfileEngaged(profileId)) {
+      || (!this.isWeightedRouting() && !this._isProfileEngaged(profileId))
+      || (this.isWeightedRouting() && !this._isProfileEngaged(profileId))) {
       throw new Error('Gateway route changed while loading its connection')
     }
     this.connectionCache.set(profileId, connection)
@@ -1183,6 +1694,14 @@ class GatewayService {
     }
   }
 
+  _clearWeightedRuntime() {
+    this.weightedSticky.clear()
+    this.weightedCooldowns.clear()
+    this.weightedRouteAnchors.clear()
+    this.weightedAutoDisabled.clear()
+    this.weightedAutoDisableInFlight.clear()
+  }
+
   async _closeServer() {
     const server = this.server
     this.server = undefined
@@ -1222,12 +1741,52 @@ class GatewayService {
       return
     }
     const suffix = target === 'codex' ? (codexRoute?.[2] || '') : (routeMatch?.[2] || '')
-    const profileId = this.persisted.routes[target]
+    const weighted = this.isWeightedRouting()
+    let requestBody
+    let requestModel = extractRequestModel(target, suffix)
+    let weightedAttempt
+    let weightedConnection
+    let profileId = this.persisted.routes[target]
+    if (weighted && ['POST', 'PUT', 'PATCH'].includes(String(request.method || '').toUpperCase())
+      && !request.headers['content-encoding']) {
+      try {
+        requestBody = await readRequestBody(request, WEIGHTED_MODEL_BODY_LIMIT_BYTES)
+      } catch {
+        rejectRequest(request, response, 413, 'Weighted routing request body is too large or invalid')
+        return
+      }
+      requestModel = extractRequestModel(target, suffix, requestBody)
+    }
+    if (weighted) {
+      let selection
+      try {
+        selection = await this._selectWeightedConnection(target, requestModel)
+      } catch {
+        rejectRequest(request, response, 503, 'Weighted routing is temporarily unavailable')
+        return
+      }
+      if (!selection) {
+        rejectRequest(request, response, 503,
+          requestModel
+            ? `No enabled weighted profile supports model: ${requestModel}`
+            : 'No enabled weighted profile is available for this client')
+        return
+      }
+      weightedAttempt = {
+        target,
+        model: requestModel,
+        profileId: selection.profileId,
+        autoDisableOnFailure: selection.autoDisableOnFailure,
+      }
+      weightedConnection = selection.connection
+      profileId = selection.profileId
+    }
     if (!profileId) {
       rejectRequest(request, response, 404, 'Gateway route not active')
       return
     }
 
+    const transportStartedAtMs = Date.now()
     let monitorId
     try {
       monitorId = this.requestMonitor?.start?.({
@@ -1239,7 +1798,18 @@ class GatewayService {
     } catch {
       monitorId = undefined
     }
+    const transportElapsedMs = () => Math.max(0, Date.now() - transportStartedAtMs)
+    const recordTransport = (patch) => {
+      try { this.requestMonitor?.recordTransport?.(monitorId, patch) } catch {}
+    }
     let monitorEnded = false
+    let weightedOutcomeRecorded = false
+    let clientAborted = false
+    const recordWeightedOutcome = (outcome) => {
+      if (!weightedAttempt || weightedOutcomeRecorded) return
+      weightedOutcomeRecorded = true
+      this._recordWeightedOutcome(weightedAttempt, outcome)
+    }
     const endMonitor = (outcome, channelFailure) => {
       if (monitorEnded || !monitorId) return
       monitorEnded = true
@@ -1247,7 +1817,9 @@ class GatewayService {
         if (outcome || typeof channelFailure === 'boolean') {
           this.requestMonitor?.end?.(monitorId, {
             ...(outcome ? { outcome } : {}),
-            ...(typeof channelFailure === 'boolean' ? { channelFailure } : {}),
+            ...(typeof channelFailure === 'boolean'
+              ? { channelFailure: weighted && channelFailure ? false : channelFailure }
+              : {}),
           })
         }
         else this.requestMonitor?.end?.(monitorId)
@@ -1256,9 +1828,9 @@ class GatewayService {
 
     let connection
     try {
-      connection = await this._connection(profileId)
+      connection = weightedAttempt ? weightedConnection : await this._connection(profileId)
     } catch {
-      if (request.destroyed || request.aborted || response.destroyed) {
+      if (request.aborted || response.destroyed) {
         endMonitor('aborted')
         return
       }
@@ -1266,11 +1838,10 @@ class GatewayService {
       rejectRequest(request, response, 502, 'Upstream profile is unavailable')
       return
     }
-    if (request.destroyed || request.aborted || response.destroyed) {
+    if (request.aborted || response.destroyed) {
       endMonitor('aborted')
       return
     }
-
     let destination
     try {
       destination = upstreamUrl(connection.profile, suffix, incomingUrl.searchParams)
@@ -1285,7 +1856,7 @@ class GatewayService {
         keyHint: connection.profile.keyHint,
         upstreamUrl: `${destination.origin}${destination.pathname}`,
         protocol: connection.profile.protocol,
-        model: connection.profile.model || undefined,
+        model: requestModel || connection.profile.model || undefined,
       })
     } catch {}
     const normalizedResponsesSuffix = suffix.replace(/\/+$/, '') || '/'
@@ -1294,38 +1865,56 @@ class GatewayService {
       && request.method === 'POST'
       && normalizedResponsesSuffix === '/responses'
       && !request.headers['content-encoding']
-    const anthropicCountRequest = target === 'claude'
+    const codexResponsesTransport = isCodexResponsesRequest(
+      target,
+      connection.profile,
+      suffix,
+      request.method,
+    )
+    const anthropicCountRequest = (target === 'claude' || target === 'claude-desktop')
       && connection.profile.protocol === 'anthropic'
       && request.method === 'POST'
       && /^\/v1\/messages\/count_tokens\/?$/.test(suffix)
       && !request.headers['content-encoding']
-    let requestBody
     let responsesStreamFallback = false
-    let originalRequestBody
+    let originalRequestBody = requestBody
     let releaseResponsesBodySlot
     let releaseAnthropicCountBodySlot
+    let upstreamRequestPromise
     // Responses 上游默认走流式。客户端仍可要求同步；这种情况下网关把 SSE
     // 收拢成 JSON 再返回，避免每个新端点都先用 stream=false 失败一次。
     const needsResponsesFallbackBody = responsesSyncCandidate
-    if (anthropicCountRequest || needsResponsesFallbackBody) {
-      if (anthropicCountRequest) {
-        releaseAnthropicCountBodySlot = this._tryAcquireAnthropicCountBody()
-        if (!releaseAnthropicCountBodySlot) {
-          endMonitor('failed', false)
-          rejectRequest(request, response, 503,
-            'Anthropic token count compatibility capacity is temporarily full')
-          return
-        }
+    if (anthropicCountRequest) {
+      releaseAnthropicCountBodySlot = this._tryAcquireAnthropicCountBody()
+      if (!releaseAnthropicCountBodySlot) {
+        endMonitor('failed', false)
+        rejectRequest(request, response, 503,
+          'Anthropic token count compatibility capacity is temporarily full')
+        return
       }
-      if (needsResponsesFallbackBody) {
-        releaseResponsesBodySlot = this._tryAcquireResponsesFallbackBody()
-        if (!releaseResponsesBodySlot) {
-          endMonitor('failed', false)
-          rejectRequest(request, response, 503,
-            'Responses compatibility capacity is temporarily full')
-          return
-        }
+    }
+    if (needsResponsesFallbackBody) {
+      releaseResponsesBodySlot = this._tryAcquireResponsesFallbackBody()
+      if (!releaseResponsesBodySlot) {
+        releaseAnthropicCountBodySlot?.()
+        endMonitor('failed', false)
+        rejectRequest(request, response, 503,
+          'Responses compatibility capacity is temporarily full')
+        return
       }
+    }
+    if (codexResponsesTransport
+      && requestBody === undefined
+      && destination.protocol === 'https:'
+      && http2Wrapper?.auto) {
+      // 先做 TLS/ALPN 协商，与本地读取大 JSON 并行；请求头仍在正文准备好后再提交。
+      upstreamRequestPromise = createUpstreamRequest(destination, {
+        method: request.method,
+        headers: {},
+      }, true)
+      upstreamRequestPromise.catch(() => {})
+    }
+    if (requestBody === undefined && (anthropicCountRequest || needsResponsesFallbackBody)) {
       try {
         requestBody = await readRequestBody(
           request,
@@ -1333,15 +1922,17 @@ class GatewayService {
             ? ANTHROPIC_COUNT_BODY_LIMIT_BYTES
             : needsResponsesFallbackBody
               ? RESPONSES_FALLBACK_BODY_LIMIT_BYTES
-              : MAX_REQUEST_BODY_BYTES,
+          : MAX_REQUEST_BODY_BYTES,
         )
-        originalRequestBody = requestBody
-        if (needsResponsesFallbackBody) {
-          const forced = forceResponsesStreaming(requestBody)
-          requestBody = forced.body
-          responsesStreamFallback = forced.changed
-        }
+        recordTransport({
+          clientRequestBytes: requestBody.length,
+          clientRequestBodyCompletedAtMs: transportElapsedMs(),
+        })
       } catch {
+        upstreamRequestPromise?.then((pendingRequest) => {
+          pendingRequest.once('error', () => {})
+          pendingRequest.destroy()
+        }).catch(() => {})
         releaseResponsesBodySlot?.()
         releaseAnthropicCountBodySlot?.()
         endMonitor(request.aborted ? 'aborted' : 'failed', false)
@@ -1351,11 +1942,61 @@ class GatewayService {
             : 'Responses streaming compatibility request failed')
         return
       }
-      if (request.aborted || response.destroyed) {
-        releaseResponsesBodySlot?.()
-        releaseAnthropicCountBodySlot?.()
-        endMonitor('aborted')
-        return
+    }
+    if (requestBody !== undefined && (anthropicCountRequest || needsResponsesFallbackBody)) {
+      originalRequestBody ||= requestBody
+      if (needsResponsesFallbackBody) {
+        const prepared = prepareResponsesRequest(requestBody)
+        requestBody = prepared.body
+        responsesStreamFallback = prepared.streamingForced
+      }
+    }
+    if (request.aborted || response.destroyed) {
+      upstreamRequestPromise?.then((pendingRequest) => {
+        pendingRequest.once('error', () => {})
+        pendingRequest.destroy()
+      }).catch(() => {})
+      releaseResponsesBodySlot?.()
+      releaseAnthropicCountBodySlot?.()
+      endMonitor('aborted')
+      return
+    }
+    /*
+     * 模型映射：方案配了映射表才在这里读体——分配模式平时是流式透传的。
+     * 命中映射就把顶层 model 改写成上游模型；未命中或不可解析时原样转发。
+     * 压缩体没法定点改写，直接放行（客户端默认不压缩请求）。
+     */
+    const modelRoutes = connection.profile.modelRoutes
+    if (modelRoutes && typeof modelRoutes === 'object' && Object.keys(modelRoutes).length > 0
+      && ['POST', 'PUT', 'PATCH'].includes(String(request.method || '').toUpperCase())
+      && !request.headers['content-encoding']) {
+      if (requestBody === undefined) {
+        try {
+          requestBody = await readRequestBody(request, WEIGHTED_MODEL_BODY_LIMIT_BYTES)
+          recordTransport({
+            clientRequestBytes: requestBody.length,
+            clientRequestBodyCompletedAtMs: transportElapsedMs(),
+          })
+        } catch {
+          upstreamRequestPromise?.then((pendingRequest) => {
+            pendingRequest.once('error', () => {})
+            pendingRequest.destroy()
+          }).catch(() => {})
+          releaseResponsesBodySlot?.()
+          releaseAnthropicCountBodySlot?.()
+          endMonitor(request.aborted ? 'aborted' : 'failed', false)
+          rejectRequest(request, response, 413,
+            'Model-routed request body is too large or invalid')
+          return
+        }
+      }
+      const mapped = rewriteRequestModel(requestBody, modelRoutes)
+      if (mapped) {
+        originalRequestBody ||= requestBody
+        requestBody = mapped.body
+        try {
+          this.requestMonitor?.updateMetadata?.(monitorId, { upstreamModel: mapped.model })
+        } catch {}
       }
     }
     const countEstimate = anthropicCountRequest
@@ -1402,28 +2043,81 @@ class GatewayService {
     })
 
     const headers = stripHeaders(request.headers, ['host'])
-    // Keep the monitoring side-channel readable; the gateway forwards the
-    // response bytes unchanged to the client, but asks upstream for identity.
-    headers['accept-encoding'] = 'identity'
-    if (responsesStreamFallback) headers.accept = 'text/event-stream'
+    // Codex Responses 的回包可能很大。向上游协商 gzip，网关随即解压后再转给
+    // 本地客户端，既缩短公网 SSE 传输，也保留监控侧的明文事件解析。
+    headers['accept-encoding'] = codexResponsesTransport ? 'gzip' : 'identity'
+    if (codexResponsesTransport) {
+      headers.accept = 'text/event-stream'
+      if (headers['cache-control'] === undefined) headers['cache-control'] = 'no-cache'
+      if (headers['openai-beta'] === undefined) {
+        headers['openai-beta'] = 'responses=experimental'
+      }
+    }
     if (requestBody !== undefined) {
       headers['content-length'] = String(requestBody.length)
     }
     injectUpstreamCredential(headers, connection.profile, connection.apiKey)
-    const transport = destination.protocol === 'https:' ? https : http
+    if (requestBody !== undefined
+      && codexResponsesTransport
+      && headers['content-encoding'] === undefined) {
+      const compressed = compressCodexRequestBodyForUpstream(destination, requestBody)
+      requestBody = compressed.body
+      if (compressed.contentEncoding) {
+        headers['content-encoding'] = compressed.contentEncoding
+        headers['content-length'] = String(requestBody.length)
+      }
+    }
+    if (requestBody !== undefined) {
+      recordTransport({
+        upstreamRequestBytes: requestBody.length,
+        upstreamRequestContentEncoding: String(headers['content-encoding'] || 'identity')
+          .trim()
+          .toLowerCase(),
+      })
+    }
     let upstreamRequest
     try {
-      upstreamRequest = transport.request(destination, {
-        method: request.method,
-        headers,
-      })
+      upstreamRequest = upstreamRequestPromise
+        ? await upstreamRequestPromise
+        : await createUpstreamRequest(destination, {
+            method: request.method,
+            headers,
+          }, codexResponsesTransport)
+      if (upstreamRequestPromise) {
+        for (const [name, value] of Object.entries(headers)) {
+          upstreamRequest.setHeader(name, value)
+        }
+      }
     } catch {
+      if (request.aborted || response.destroyed) {
+        releaseResponsesBodySlot?.()
+        releaseAnthropicCountBodySlot?.()
+        endMonitor('aborted')
+        return
+      }
+      recordWeightedOutcome('hard-failure')
       releaseResponsesBodySlot?.()
       releaseAnthropicCountBodySlot?.()
       endMonitor('failed', false)
       rejectRequest(request, response, 502, 'Upstream request configuration is invalid')
       return
     }
+    if (request.aborted || response.destroyed) {
+      upstreamRequest.once('error', () => {})
+      if (!upstreamRequest.destroyed) upstreamRequest.destroy()
+      releaseResponsesBodySlot?.()
+      releaseAnthropicCountBodySlot?.()
+      endMonitor('aborted')
+      return
+    }
+    upstreamRequest.once('finish', () => {
+      recordTransport({ upstreamRequestFinishedAtMs: transportElapsedMs() })
+      if (responsesSyncCandidate) {
+        // 中转站通常在收到完整请求体后才开始计时；等待 Node 确认上游请求写完，
+        // 让首字口径尽量贴近中转站的上游计时；总耗时仍从客户端请求到达开始记录。
+        try { this.requestMonitor?.upstreamRequestStarted?.(monitorId) } catch {}
+      }
+    })
     let upstreamTimedOut = false
     let fallbackTotalTimer
     const upstreamTimer = setTimeout(() => {
@@ -1433,6 +2127,14 @@ class GatewayService {
     upstreamTimer.unref?.()
     this.upstreamRequests.add(upstreamRequest)
     let responseReceived = false
+    let upstreamFirstByteRecorded = false
+    let activeUpstreamResponse
+    const abortUpstream = () => {
+      if (activeUpstreamResponse && !activeUpstreamResponse.destroyed) {
+        activeUpstreamResponse.destroy()
+      }
+      if (!upstreamRequest.destroyed) upstreamRequest.destroy()
+    }
     upstreamRequest.once('close', () => {
       clearTimeout(upstreamTimer)
       clearTimeout(fallbackTotalTimer)
@@ -1440,27 +2142,48 @@ class GatewayService {
       releaseAnthropicCountBodySlot?.()
       this.upstreamRequests.delete(upstreamRequest)
       if (!responseReceived) {
+        if (!clientAborted) recordWeightedOutcome('hard-failure')
         endMonitor('failed', true)
       }
     })
     upstreamRequest.on('response', (upstreamResponse) => {
       responseReceived = true
+      activeUpstreamResponse = upstreamResponse
       clearTimeout(upstreamTimer)
+      try {
+        this.requestMonitor?.updateMetadata?.(monitorId, {
+          upstreamHttpVersion: upstreamResponse.httpVersion,
+        })
+      } catch {}
       const contentType = String(upstreamResponse.headers['content-type'] || '')
       const responseIsEventStream = contentType.toLowerCase().includes('text/event-stream')
       const aggregatedResponse = responsesStreamFallback && responseIsEventStream
       const contentEncoding = String(upstreamResponse.headers['content-encoding'] || '')
         .trim()
         .toLowerCase()
+      recordTransport({
+        upstreamResponseHeadersAtMs: transportElapsedMs(),
+        upstreamResponseContentEncoding: contentEncoding || 'identity',
+      })
+      const responseDecoder = codexResponsesTransport && contentEncoding === 'gzip'
+        ? zlib.createGunzip({ flush: zlib.constants.Z_SYNC_FLUSH })
+        : undefined
       const unsupportedTransformedEncoding = aggregatedResponse
         && contentEncoding
         && contentEncoding !== 'identity'
+        && !responseDecoder
       const responseHeaders = stripHeaders(
         upstreamResponse.headers,
-        aggregatedResponse
+        aggregatedResponse || responseDecoder
           ? AGGREGATED_RESPONSE_INVALIDATED_HEADERS
           : [],
       )
+      if (responseIsEventStream && !aggregatedResponse) {
+        if (responseHeaders['cache-control'] === undefined) {
+          responseHeaders['cache-control'] = 'no-cache'
+        }
+        responseHeaders['x-accel-buffering'] = 'no'
+      }
       const upstreamStatus = upstreamResponse.statusCode || 502
       const updateCountCapability = (useCountFallback) => {
         if (!countFallbackKey) return
@@ -1497,6 +2220,11 @@ class GatewayService {
       const useCountFallback = countEstimate !== undefined
         && anthropicCountErrorSupportsFallback(upstreamStatus)
       updateCountCapability(useCountFallback)
+      if (!useCountFallback) {
+        if (upstreamStatus === 429) recordWeightedOutcome('rate-limit')
+        else if (upstreamStatus >= 500) recordWeightedOutcome('hard-failure')
+        else if (upstreamStatus >= 400) recordWeightedOutcome('model-failure')
+      }
       startMonitoredResponse(useCountFallback)
       if (useCountFallback) {
         upstreamResponse.resume()
@@ -1544,33 +2272,50 @@ class GatewayService {
        * 原本统计先注册，于是每一片都要先被统计跑完才轮到转发——统计再快也是白白
        * 顶在客户端前面。挪到后面，字节先出门，统计随后。
        */
-      upstreamResponse.once('end', clearFallbackTimers)
+      upstreamResponse.once('end', () => {
+        recordTransport({ upstreamResponseEndedAtMs: transportElapsedMs() })
+        clearFallbackTimers()
+      })
       upstreamResponse.once('aborted', () => {
         clearFallbackTimers()
+        if (!clientAborted) recordWeightedOutcome('hard-failure')
         endMonitor('failed', true)
       })
       upstreamResponse.once('error', () => {
         clearFallbackTimers()
+        if (!clientAborted) recordWeightedOutcome('hard-failure')
         endMonitor('failed', true)
       })
       const attachMonitor = (stream) => {
         stream.on('data', (chunk) => {
+          if (!upstreamFirstByteRecorded && chunk?.length > 0) {
+            upstreamFirstByteRecorded = true
+            recordTransport({ upstreamFirstByteAtMs: transportElapsedMs() })
+          }
           try {
             this.requestMonitor?.observeChunk?.(monitorId, chunk)
           } catch {}
         })
       }
       if (!aggregatedResponse) {
-        upstreamResponse.once('end', () => endMonitor())
+        const forwardedResponse = responseDecoder || upstreamResponse
+        forwardedResponse.once('end', () => {
+          recordWeightedOutcome('success')
+          endMonitor()
+        })
         response.writeHead(
           upstreamResponse.statusCode || 502,
           upstreamResponse.statusMessage,
           responseHeaders,
         )
-        pipeline(upstreamResponse, response, (error) => {
+        if (responseIsEventStream) response.flushHeaders?.()
+        const streams = responseDecoder
+          ? [upstreamResponse, responseDecoder, response]
+          : [upstreamResponse, response]
+        pipeline(...streams, (error) => {
           if (error && !response.destroyed) response.destroy(error)
         })
-        attachMonitor(upstreamResponse)
+        attachMonitor(forwardedResponse)
         return
       }
 
@@ -1584,9 +2329,13 @@ class GatewayService {
       }
       const transform = createResponsesSseJsonTransform()
       transform.pipe(response)
-      pipeline(upstreamResponse, transform, (error) => {
+      const streams = responseDecoder
+        ? [upstreamResponse, responseDecoder, transform]
+        : [upstreamResponse, transform]
+      pipeline(...streams, (error) => {
         if (!error) {
           clearFallbackTimers()
+          recordWeightedOutcome('success')
           endMonitor()
           return
         }
@@ -1602,9 +2351,10 @@ class GatewayService {
       })
       // 同步客户端的 Responses 请求在上游已经是 SSE；监控原始流，才能记录
       // 监听原始流以记录首个有效生成事件，而不是等收拢后的完整 JSON 才误报首 token。
-      attachMonitor(aggregatedResponse ? upstreamResponse : transform)
+      attachMonitor(responseDecoder || upstreamResponse)
     })
     upstreamRequest.on('error', () => {
+      if (!clientAborted) recordWeightedOutcome('hard-failure')
       releaseResponsesBodySlot?.()
       releaseAnthropicCountBodySlot?.()
       endMonitor('failed', true)
@@ -1620,13 +2370,15 @@ class GatewayService {
       }
     })
     request.on('aborted', () => {
+      clientAborted = true
       endMonitor('aborted')
-      upstreamRequest.destroy()
+      abortUpstream()
     })
     response.on('close', () => {
       if (!response.writableEnded) {
+        clientAborted = true
         endMonitor('aborted', false)
-        upstreamRequest.destroy()
+        abortUpstream()
       }
     })
     if (requestBody !== undefined) {
@@ -1661,9 +2413,11 @@ class GatewayService {
 module.exports = {
   ANTHROPIC_COUNT_BODY_LIMIT_BYTES,
   ANTHROPIC_COUNT_BODY_SLOTS,
+  CODEX_GZIP_MIN_BYTES,
   DEFAULT_GATEWAY_HOST,
   DEFAULT_GATEWAY_PORT,
   GatewayStoreSchema,
+  compressCodexRequestBodyForUpstream,
   defaultGatewayStore,
   GatewayService,
   conservativeAnthropicInputTokens,

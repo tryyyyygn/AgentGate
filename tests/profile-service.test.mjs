@@ -101,6 +101,103 @@ describe("方案服务", () => {
     expect(after.autoSwitch).toEqual({ enabled: true, intervalMinutes: 15 });
   });
 
+  it("保存权重模式的模型选择、权重和自动停用策略", async () => {
+    const { profileStore } = createTestStores(root);
+    const service = new ProfileService(profileStore, testVault);
+    const created = await service.save({
+      name: "权重策略",
+      protocol: "openai-chat",
+      baseUrl: "https://relay.example/v1",
+      apiKey: "sk-routing-secret",
+      model: "model-a",
+      authMode: "bearer",
+      targets: ["codex"],
+    });
+    const stored = await service.getStored(created.id);
+    await service.updateEndpointResults(created.id, [{
+      url: stored.baseUrl,
+      models: ["model-a", "model-b"],
+      health: {
+        status: "healthy",
+        latencyMs: 100,
+        checkedAt: new Date().toISOString(),
+        statusCode: 200,
+        message: "连接正常",
+      },
+    }], stored.connectionRevision);
+
+    const updated = await service.updateRouting(created.id, {
+      enabled: true,
+      enabledModels: ["model-a"],
+      weight: 80,
+      autoDisableOnFailure: true,
+    });
+
+    expect(updated.routing).toEqual({
+      enabled: true,
+      enabledModels: ["model-a"],
+      weight: 80,
+      autoDisableOnFailure: true,
+    });
+    expect((await service.getStored(created.id)).routing.disabledModels).toEqual(["model-b"]);
+  });
+
+  it("保存并公开模型映射，映射变化推进连接 revision，复制时带走映射", async () => {
+    const { profileStore } = createTestStores(root);
+    const service = new ProfileService(profileStore, testVault);
+    const created = await service.save({
+      name: "映射方案",
+      protocol: "anthropic",
+      baseUrl: "https://kimi.example/coding",
+      apiKey: "sk-route-secret",
+      model: "k3",
+      modelRoutes: {
+        "claude-sonnet-5": { model: "k3", labelOverride: "k3", supports1m: true },
+        "claude-opus-4-8": { model: "k3" },
+      },
+      authMode: "bearer",
+      targets: ["claude", "claude-desktop"],
+    });
+    expect(created.modelRoutes).toEqual({
+      "claude-sonnet-5": { model: "k3", labelOverride: "k3", supports1m: true },
+      "claude-opus-4-8": { model: "k3" },
+    });
+    const before = await service.getStored(created.id);
+
+    const updated = await service.save({
+      id: created.id,
+      name: created.name,
+      protocol: created.protocol,
+      baseUrl: created.baseUrl,
+      model: created.model,
+      modelRoutes: { "claude-sonnet-5": { model: "k3-pro" } },
+      authMode: created.authMode,
+      targets: created.targets,
+    });
+    expect(updated.modelRoutes).toEqual({ "claude-sonnet-5": { model: "k3-pro" } });
+    const after = await service.getStored(created.id);
+    expect(after.connectionRevision).toBe(before.connectionRevision + 1);
+    expect(after.modelRoutes).toEqual({ "claude-sonnet-5": { model: "k3-pro" } });
+
+    const copy = await service.duplicate(created.id);
+    expect(copy.modelRoutes).toEqual({ "claude-sonnet-5": { model: "k3-pro" } });
+  });
+
+  it("拒绝上游模型为空的映射条目", async () => {
+    const { profileStore } = createTestStores(root);
+    const service = new ProfileService(profileStore, testVault);
+    await expect(service.save({
+      name: "坏映射",
+      protocol: "anthropic",
+      baseUrl: "https://kimi.example/coding",
+      apiKey: "sk-route-secret",
+      model: "k3",
+      modelRoutes: { "claude-sonnet-5": { model: "" } },
+      authMode: "bearer",
+      targets: ["claude"],
+    })).rejects.toThrow();
+  });
+
   it("把旧版单 URL 存储安全迁移为 URL 池", async () => {
     const profilePath = path.join(root, "data", "profiles.json");
     const createdAt = new Date().toISOString();
@@ -148,7 +245,72 @@ describe("方案服务", () => {
       enableToolSearch: migrated.enableToolSearch,
       autoSwitch: migrated.autoSwitch,
     });
-    expect(JSON.parse(await fs.readFile(profilePath, "utf8")).version).toBe(3);
+    expect(JSON.parse(await fs.readFile(profilePath, "utf8")).version).toBe(4);
+  });
+
+  it("v3 的 anthropic 方案迁移到 v4 时继承 claude-desktop 目标", async () => {
+    const profilePath = path.join(root, "data", "profiles.json");
+    const createdAt = new Date().toISOString();
+    await fs.mkdir(path.dirname(profilePath), { recursive: true });
+    await fs.writeFile(profilePath, `${JSON.stringify({
+      version: 3,
+      groups: [],
+      profiles: [{
+        id: "00000000-0000-4000-8000-000000000102",
+        name: "旧版 Claude",
+        protocol: "anthropic",
+        baseUrl: "https://relay.example",
+        endpoints: [{
+          url: "https://relay.example",
+          models: [],
+          healthHistory: [],
+          healthTimeline: [],
+        }],
+        model: "claude-sonnet-4-5",
+        authMode: "bearer",
+        targets: ["claude"],
+        enableToolSearch: false,
+        autoSwitch: { enabled: false, intervalMinutes: 2 },
+        routing: { enabled: true, disabledModels: [], weight: 0, autoDisableOnFailure: false },
+        connectionRevision: 1,
+        keyHint: "****cret",
+        encryptedKey: testVault.encrypt("sk-v3-secret"),
+        createdAt,
+        updatedAt: createdAt,
+      }, {
+        id: "00000000-0000-4000-8000-000000000103",
+        name: "旧版 Codex",
+        protocol: "openai-responses",
+        baseUrl: "https://relay.example/v1",
+        endpoints: [{
+          url: "https://relay.example/v1",
+          models: [],
+          healthHistory: [],
+          healthTimeline: [],
+        }],
+        model: "gpt-5.6",
+        authMode: "bearer",
+        targets: ["codex"],
+        enableToolSearch: false,
+        autoSwitch: { enabled: false, intervalMinutes: 2 },
+        routing: { enabled: true, disabledModels: [], weight: 0, autoDisableOnFailure: false },
+        connectionRevision: 1,
+        keyHint: "****cret",
+        encryptedKey: testVault.encrypt("sk-v3-codex"),
+        createdAt,
+        updatedAt: createdAt,
+      }],
+    }, null, 2)}\n`, "utf8");
+
+    const { profileStore } = createTestStores(root);
+    const service = new ProfileService(profileStore, testVault);
+    const profiles = await service.list();
+
+    const anthropic = profiles.find((profile) => profile.protocol === "anthropic");
+    expect(anthropic.targets).toEqual(["claude", "claude-desktop"]);
+    expect(anthropic.modelRoutes).toEqual({});
+    const openai = profiles.find((profile) => profile.protocol === "openai-responses");
+    expect(openai.targets).toEqual(["codex"]);
   });
 
   it("在主进程内复制方案和 Key，并重置运行时状态", async () => {
@@ -275,7 +437,7 @@ describe("密钥分组", () => {
 
     await service.renameGroup(group.id, "已有渠道");
     const persisted = JSON.parse(await fs.readFile(profilePath, "utf8"));
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(4);
     expect(persisted.groups[0].name).toBe("已有渠道");
     expect(persisted.profiles[0].groupId).toBe(group.id);
     expect(await service.getSecret(profile.id)).toBe("sk-production-secret");

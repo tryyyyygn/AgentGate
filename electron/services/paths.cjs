@@ -38,7 +38,8 @@ function resolveClaudeDesktopConfig(env, homeDir) {
   const localAppData = resolveUserPath(env.LOCALAPPDATA, homeDir)
   if (!localAppData) return undefined
   const library = path.join(localAppData, 'Claude-3p', 'configLibrary')
-  if (!fs.existsSync(library)) return undefined
+  // 目录不存在也照常返回预期路径：适配器据此判断「未安装」，openConfig 有可展示的落点。
+  if (!fs.existsSync(library)) return { library }
   try {
     const meta = JSON.parse(fs.readFileSync(path.join(library, '_meta.json'), 'utf8'))
     const appliedId = meta?.appliedId
@@ -92,8 +93,10 @@ function resolveClientPaths(env = process.env, homeDir = os.homedir()) {
     claude: {
       config: path.join(claudeDirectory, 'settings.json'),
       ...(vscodeConfig ? { vscodeConfig } : {}),
-      ...(desktopConfig?.config ? { desktopConfig: desktopConfig.config } : {}),
-      ...(desktopConfig?.library ? { desktopLibrary: desktopConfig.library } : {}),
+    },
+    'claude-desktop': {
+      ...(desktopConfig?.config ? { config: desktopConfig.config } : {}),
+      ...(desktopConfig?.library ? { library: desktopConfig.library } : {}),
     },
     codex: {
       config: path.join(codexDirectory, 'config.toml'),
