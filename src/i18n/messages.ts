@@ -159,6 +159,12 @@ export interface Messages {
     delete: string;
     copyKey: string;
     models: string;
+    routingEnabled: string;
+    routingDisabled: string;
+    selectAllModels: string;
+    clearModels: string;
+    weight: string;
+    autoDisableOnFailure: string;
     loading: string;
     loadError: string;
     retry: string;
@@ -333,6 +339,12 @@ export interface Messages {
     attractorField: string;
     system: string;
     language: string;
+    routingMode: string;
+    routingAssignment: string;
+    routingWeighted: string;
+    routingStrategy: string;
+    routingFixed: string;
+    routingAdaptive: string;
     security: string;
     history: string;
     historyEmpty: string;
@@ -379,6 +391,17 @@ export interface Messages {
     incompatible: string;
     toolSearch: string;
     toolSearchDesc: string;
+    presets: string;
+    presetBlank: string;
+    presetKimiCoding: string;
+    modelRoutes: string;
+    modelRoutesHint: string;
+    routeClient: string;
+    routeUpstream: string;
+    routeLabel: string;
+    route1m: string;
+    routeAdd: string;
+    routeRemove: string;
     cancel: string;
     save: string;
     saving: string;
@@ -591,6 +614,12 @@ const zh: Messages = {
     delete: "删除",
     copyKey: "复制密钥",
     models: "个模型",
+    routingEnabled: "参与权重路由",
+    routingDisabled: "已停用",
+    selectAllModels: "全选模型",
+    clearModels: "取消全选",
+    weight: "权重",
+    autoDisableOnFailure: "连续故障后停用",
     loading: "正在读取本地配置",
     loadError: "无法读取本地数据",
     retry: "重试",
@@ -761,6 +790,12 @@ const zh: Messages = {
     attractorField: "世界线",
     system: "跟随系统",
     language: "语言",
+    routingMode: "路由模式",
+    routingAssignment: "分配模式",
+    routingWeighted: "权重模式",
+    routingStrategy: "权重策略",
+    routingFixed: "固定权重",
+    routingAdaptive: "自适应",
     security: "真实 Key 由 Windows DPAPI 加密，只在本机交给网关；客户端不会保存上游 Key。方案中的 URL 与 Key 永不写入客户端配置文件。",
     history: "配置变更历史",
     historyEmpty: "暂无配置变更记录",
@@ -807,6 +842,17 @@ const zh: Messages = {
     incompatible: "协议不兼容",
     toolSearch: "Claude Tool Search",
     toolSearchDesc: "为非官方域名写入 ENABLE_TOOL_SEARCH",
+    presets: "模板",
+    presetBlank: "空白方案",
+    presetKimiCoding: "Kimi For Coding",
+    modelRoutes: "模型映射",
+    modelRoutesHint: "把客户端发来的模型改写成上游模型；留空则原样转发",
+    routeClient: "客户端模型",
+    routeUpstream: "上游模型",
+    routeLabel: "显示名",
+    route1m: "1M",
+    routeAdd: "添加映射",
+    routeRemove: "删除",
     cancel: "取消",
     save: "保存",
     saving: "正在保存",
@@ -1024,6 +1070,12 @@ const zhTW: Messages = {
     delete: "刪除",
     copyKey: "複製 Key",
     models: "個 Model",
+    routingEnabled: "參與權重路由",
+    routingDisabled: "已停用",
+    selectAllModels: "全選 Model",
+    clearModels: "取消全選",
+    weight: "權重",
+    autoDisableOnFailure: "連續故障後停用",
     loading: "讀取本機設定中",
     loadError: "讀不到本機資料",
     retry: "重試",
@@ -1194,6 +1246,12 @@ const zhTW: Messages = {
     attractorField: "世界線",
     system: "跟隨系統",
     language: "語言",
+    routingMode: "路由模式",
+    routingAssignment: "分配模式",
+    routingWeighted: "權重模式",
+    routingStrategy: "權重策略",
+    routingFixed: "固定權重",
+    routingAdaptive: "自適應",
     security: "真正的 Key 由 Windows DPAPI 加密，只在本機交給 Gateway；Client 不會存到上游的 Key。Profile 裡的 URL 和 Key 永遠不會寫進 Client 的設定檔。",
     history: "設定變更紀錄",
     historyEmpty: "目前沒有設定變更紀錄",
@@ -1240,6 +1298,17 @@ const zhTW: Messages = {
     incompatible: "協定不相容",
     toolSearch: "Claude Tool Search",
     toolSearchDesc: "為非官方網域寫入 ENABLE_TOOL_SEARCH",
+    presets: "範本",
+    presetBlank: "空白方案",
+    presetKimiCoding: "Kimi For Coding",
+    modelRoutes: "模型映射",
+    modelRoutesHint: "把用戶端送來的模型改寫成上游模型；留空則原樣轉發",
+    routeClient: "用戶端模型",
+    routeUpstream: "上游模型",
+    routeLabel: "顯示名",
+    route1m: "1M",
+    routeAdd: "新增映射",
+    routeRemove: "刪除",
     cancel: "取消",
     save: "儲存",
     saving: "儲存中",
@@ -1457,6 +1526,12 @@ const ja: Messages = {
     delete: "削除",
     copyKey: "キーをコピー",
     models: "モデル",
+    routingEnabled: "重み付けルーティングに参加",
+    routingDisabled: "無効",
+    selectAllModels: "モデルをすべて選択",
+    clearModels: "モデル選択を解除",
+    weight: "重み",
+    autoDisableOnFailure: "連続障害後に無効化",
     loading: "ローカル設定を読み込み中",
     loadError: "ローカルデータを読み込めません",
     retry: "再試行",
@@ -1627,6 +1702,12 @@ const ja: Messages = {
     attractorField: "世界線",
     system: "システムに従う",
     language: "言語",
+    routingMode: "ルーティングモード",
+    routingAssignment: "割り当て",
+    routingWeighted: "重み付け",
+    routingStrategy: "重み付け方式",
+    routingFixed: "固定",
+    routingAdaptive: "適応",
     security: "本物のキーは Windows DPAPI で暗号化し、ローカルのゲートウェイにのみ渡します。クライアントが上流のキーを保存することはありません。プロファイルの URL とキーがクライアントの設定ファイルに書き込まれることもありません。",
     history: "設定変更履歴",
     historyEmpty: "設定変更履歴はありません",
@@ -1673,6 +1754,17 @@ const ja: Messages = {
     incompatible: "プロトコル非対応",
     toolSearch: "Claude Tool Search",
     toolSearchDesc: "非公式ドメインに ENABLE_TOOL_SEARCH を書き込む",
+    presets: "テンプレート",
+    presetBlank: "空のプロファイル",
+    presetKimiCoding: "Kimi For Coding",
+    modelRoutes: "モデルマッピング",
+    modelRoutesHint: "クライアントからのモデル名を上流のモデル名に書き換えます。空ならそのまま転送",
+    routeClient: "クライアント側モデル",
+    routeUpstream: "上流モデル",
+    routeLabel: "表示名",
+    route1m: "1M",
+    routeAdd: "マッピングを追加",
+    routeRemove: "削除",
     cancel: "キャンセル",
     save: "保存",
     saving: "保存中",
@@ -1890,6 +1982,12 @@ const en: Messages = {
     delete: "DELETE",
     copyKey: "Copy key",
     models: "models",
+    routingEnabled: "WEIGHTED ROUTING",
+    routingDisabled: "DISABLED",
+    selectAllModels: "SELECT ALL MODELS",
+    clearModels: "CLEAR MODELS",
+    weight: "WEIGHT",
+    autoDisableOnFailure: "DISABLE AFTER FAILURES",
     loading: "Reading local config",
     loadError: "Cannot read local data",
     retry: "RETRY",
@@ -2060,6 +2158,12 @@ const en: Messages = {
     attractorField: "Attractor Field",
     system: "SYSTEM",
     language: "Language",
+    routingMode: "ROUTING MODE",
+    routingAssignment: "ASSIGNMENT",
+    routingWeighted: "WEIGHTED",
+    routingStrategy: "WEIGHT STRATEGY",
+    routingFixed: "FIXED",
+    routingAdaptive: "ADAPTIVE",
     security: "Real keys are encrypted with Windows DPAPI and handed only to the local gateway. Clients never store upstream keys, and profile URLs and keys are never written to client config files.",
     history: "CONFIGURATION HISTORY",
     historyEmpty: "No configuration changes yet",
@@ -2106,6 +2210,17 @@ const en: Messages = {
     incompatible: "Protocol mismatch",
     toolSearch: "Claude Tool Search",
     toolSearchDesc: "Writes ENABLE_TOOL_SEARCH for non-official domains",
+    presets: "Template",
+    presetBlank: "Blank profile",
+    presetKimiCoding: "Kimi For Coding",
+    modelRoutes: "Model mapping",
+    modelRoutesHint: "Rewrite the model sent by the client to the upstream model; leave empty to forward as-is",
+    routeClient: "Client model",
+    routeUpstream: "Upstream model",
+    routeLabel: "Label",
+    route1m: "1M",
+    routeAdd: "Add mapping",
+    routeRemove: "Remove",
     cancel: "CANCEL",
     save: "SAVE",
     saving: "SAVING",

@@ -316,12 +316,12 @@ describe("client adapters", () => {
 }\n`);
     const adapter = createAdapters({
       ...paths,
-      claude: { ...paths.claude, desktopConfig },
-    }).claude;
+      "claude-desktop": { config: desktopConfig },
+    })["claude-desktop"];
     const baseline = await adapter.captureManagedState();
     const profile = {
       ...baseProfile,
-      baseUrl: "http://127.0.0.1:17863/claude",
+      baseUrl: "http://127.0.0.1:17863/claude-desktop",
       model: "claude-sonnet-4-6",
     };
 
@@ -390,7 +390,7 @@ describe("client adapters", () => {
     expect(apiKeyDesktop.modelDiscoveryEnabled).toBeUndefined();
   });
 
-  it("inspects the active Claude Desktop profile when Claude Code has no endpoint", async () => {
+  it("inspects the active Claude Desktop profile through the desktop adapter", async () => {
     const desktopLibrary = path.join(root, "Claude-3p", "configLibrary");
     const desktopProfileId = "11111111-1111-4111-8111-111111111111";
     const desktopProfile = path.join(desktopLibrary, `${desktopProfileId}.json`);
@@ -403,18 +403,25 @@ describe("client adapters", () => {
       inferenceGatewayBaseUrl: "https://desktop.example/anthropic",
       inferenceModels: [{ name: "claude-sonnet-4-6", supports1m: true }],
     }));
-    const adapter = createAdapters({
+    const registry = createAdapters({
       ...paths,
-      claude: { ...paths.claude, desktopLibrary },
-    }).claude;
-    const sources = new Map(await Promise.all(adapter.paths.map(async (filePath) => (
+      "claude-desktop": { library: desktopLibrary },
+    });
+    const desktopAdapter = registry["claude-desktop"];
+    const sources = new Map(await Promise.all(desktopAdapter.paths.map(async (filePath) => (
       [filePath, await fs.readFile(filePath, "utf8")]
     ))));
 
-    expect(adapter.inspect(sources)).toEqual({
+    expect(desktopAdapter.inspect(sources)).toEqual({
       baseUrl: "https://desktop.example/anthropic",
       model: "claude-sonnet-4-6",
     });
+
+    const cliSources = new Map([
+      [paths.claude.config, await fs.readFile(paths.claude.config, "utf8")],
+    ]);
+    expect(registry.claude.inspect(cliSources))
+      .toEqual({ baseUrl: undefined, model: undefined });
   });
 
   it.each([
@@ -423,15 +430,12 @@ describe("client adapters", () => {
   ])("ignores %s Claude Desktop metadata during capture and apply", async (_name, meta) => {
     const desktopLibrary = path.join(root, "Claude-3p", "configLibrary");
     const metaPath = path.join(desktopLibrary, "_meta.json");
-    await seed(paths.claude.config, JSON.stringify({
-      env: { KEEP_ME: "yes" },
-    }));
     await fs.mkdir(desktopLibrary, { recursive: true });
     if (meta !== null) await seed(metaPath, meta);
     const adapter = createAdapters({
       ...paths,
-      claude: { ...paths.claude, desktopLibrary },
-    }).claude;
+      "claude-desktop": { library: desktopLibrary },
+    })["claude-desktop"];
 
     if (meta !== null) expect(() => adapter.validate(meta, metaPath)).not.toThrow();
     await expect(adapter.gatewayOwnership(baseProfile, "gateway-secret"))
@@ -441,7 +445,7 @@ describe("client adapters", () => {
     await expect(adapter.build(baseProfile, "gateway-secret", {
       gateway: true,
       baseline,
-    })).resolves.toHaveLength(1);
+    })).resolves.toHaveLength(0);
   });
 
   it("ignores Claude Desktop when an older gateway baseline cannot restore it", async () => {
@@ -451,10 +455,10 @@ describe("client adapters", () => {
       inferenceGatewayBaseUrl: "https://before.example",
       inferenceCredentialKind: "interactive",
     }));
-    const adapter = createAdapters({
+    const registry = createAdapters({
       ...paths,
-      claude: { ...paths.claude, desktopConfig },
-    }).claude;
+      "claude-desktop": { config: desktopConfig },
+    });
     const oldBaseline = {
       baseUrl: { present: false, value: null },
       apiKey: { present: false, value: null },
@@ -463,11 +467,15 @@ describe("client adapters", () => {
       toolSearch: { present: false, value: null },
     };
 
-    const drafts = await adapter.build(baseProfile, "gateway-secret", {
+    const cliDrafts = await registry.claude.build(baseProfile, "gateway-secret", {
       gateway: true,
       baseline: oldBaseline,
     });
-    expect(drafts.map((draft) => draft.path)).toEqual([paths.claude.config]);
+    expect(cliDrafts.map((draft) => draft.path)).toEqual([paths.claude.config]);
+    await expect(registry["claude-desktop"].build(baseProfile, "gateway-secret", {
+      gateway: true,
+      baseline: oldBaseline,
+    })).resolves.toHaveLength(0);
   });
 
   it("does not parse invalid Claude Desktop metadata for an older gateway baseline", async () => {
@@ -475,8 +483,8 @@ describe("client adapters", () => {
     await seed(path.join(desktopLibrary, "_meta.json"), "{}\n");
     const adapter = createAdapters({
       ...paths,
-      claude: { ...paths.claude, desktopLibrary },
-    }).claude;
+      "claude-desktop": { library: desktopLibrary },
+    })["claude-desktop"];
     const oldBaseline = {
       baseUrl: { present: false, value: null },
       apiKey: { present: false, value: null },
@@ -488,8 +496,8 @@ describe("client adapters", () => {
     await expect(adapter.build(baseProfile, "gateway-secret", {
       gateway: true,
       baseline: oldBaseline,
-    })).resolves.toHaveLength(1);
-    await expect(adapter.buildRestore(oldBaseline)).resolves.toHaveLength(1);
+    })).resolves.toHaveLength(0);
+    await expect(adapter.buildRestore(oldBaseline)).resolves.toHaveLength(0);
   });
 
   it("keeps managing the captured Claude Desktop profile after appliedId changes", async () => {
@@ -501,7 +509,7 @@ describe("client adapters", () => {
     const desktopProfileB = path.join(desktopLibrary, `${profileBId}.json`);
     const profile = {
       ...baseProfile,
-      baseUrl: "http://127.0.0.1:17863/claude",
+      baseUrl: "http://127.0.0.1:17863/claude-desktop",
       model: "gateway-model",
     };
     const profileABefore = {
@@ -521,18 +529,16 @@ describe("client adapters", () => {
       profileMarker: "B",
     }, null, 2)}\n`;
 
-    await seed(paths.claude.config, "{}\n");
     await seed(desktopMeta, JSON.stringify({ appliedId: profileAId }));
     await seed(desktopProfileA, `${JSON.stringify(profileABefore, null, 2)}\n`);
     await seed(desktopProfileB, profileBGateway);
     const adapter = createAdapters({
       ...paths,
-      claude: {
-        ...paths.claude,
-        desktopConfig: desktopProfileA,
-        desktopLibrary,
+      "claude-desktop": {
+        config: desktopProfileA,
+        library: desktopLibrary,
       },
-    }).claude;
+    })["claude-desktop"];
     const baseline = await adapter.captureManagedState();
 
     expect(baseline.desktopProfileId).toBe(profileAId);
@@ -542,8 +548,7 @@ describe("client adapters", () => {
       gateway: true,
       baseline,
     });
-    expect(buildDrafts.map((draft) => draft.path)).toContain(desktopProfileA);
-    expect(buildDrafts.map((draft) => draft.path)).not.toContain(desktopProfileB);
+    expect(buildDrafts.map((draft) => draft.path)).toEqual([desktopProfileA]);
     await writeDrafts(buildDrafts);
     expect(parse(await fs.readFile(desktopProfileA, "utf8")).inferenceGatewayBaseUrl)
       .toBe(profile.baseUrl);
@@ -556,8 +561,7 @@ describe("client adapters", () => {
     )).toBe(GATEWAY_OWNERSHIP.CONFLICT);
 
     const restoreDrafts = await adapter.buildRestore(baseline);
-    expect(restoreDrafts.map((draft) => draft.path)).toContain(desktopProfileA);
-    expect(restoreDrafts.map((draft) => draft.path)).not.toContain(desktopProfileB);
+    expect(restoreDrafts.map((draft) => draft.path)).toEqual([desktopProfileA]);
     await writeDrafts(restoreDrafts);
     expect(parse(await fs.readFile(desktopProfileA, "utf8"))).toEqual(profileABefore);
     expect(await fs.readFile(desktopProfileB, "utf8")).toBe(profileBGateway);
@@ -581,27 +585,46 @@ describe("client adapters", () => {
       modelDiscoveryEnabled: true,
       inferenceModels: [{ name: "desktop-before-model", supports1m: true }],
     }));
-    const adapter = createAdapters({
+    const registry = createAdapters({
       ...paths,
-      claude: { ...paths.claude, vscodeConfig, desktopConfig },
-    }).claude;
-    const baseline = await adapter.captureManagedState();
+      claude: { ...paths.claude, vscodeConfig },
+      "claude-desktop": { config: desktopConfig },
+    });
+    const cliAdapter = registry.claude;
+    const desktopAdapter = registry["claude-desktop"];
+    const cliBaseline = await cliAdapter.captureManagedState();
+    const desktopBaseline = await desktopAdapter.captureManagedState();
     const gatewayProfile = {
       ...baseProfile,
       baseUrl: "http://127.0.0.1:17863/claude",
       model: "gateway-model",
     };
-    await writeDrafts(await adapter.build(gatewayProfile, "gateway-secret", {
+    const desktopGatewayProfile = {
+      ...gatewayProfile,
+      baseUrl: "http://127.0.0.1:17863/claude-desktop",
+    };
+    await writeDrafts(await cliAdapter.build(gatewayProfile, "gateway-secret", {
       gateway: true,
-      baseline,
+      baseline: cliBaseline,
+    }));
+    await writeDrafts(await desktopAdapter.build(desktopGatewayProfile, "gateway-secret", {
+      gateway: true,
+      baseline: desktopBaseline,
     }));
 
     const emptyProfile = { ...gatewayProfile, model: "" };
-    const emptyDrafts = await adapter.build(emptyProfile, "gateway-secret", {
+    const emptyDrafts = await cliAdapter.build(emptyProfile, "gateway-secret", {
       gateway: true,
-      baseline,
+      baseline: cliBaseline,
     });
     await writeDrafts(emptyDrafts);
+    const emptyDesktopProfile = { ...desktopGatewayProfile, model: "" };
+    const emptyDesktopDrafts = await desktopAdapter.build(
+      emptyDesktopProfile,
+      "gateway-secret",
+      { gateway: true, baseline: desktopBaseline },
+    );
+    await writeDrafts(emptyDesktopDrafts);
 
     const native = parse(await fs.readFile(paths.claude.config, "utf8"));
     expect(native.env.ANTHROPIC_MODEL).toBe("native-before-model");
@@ -613,20 +636,26 @@ describe("client adapters", () => {
     expect(desktop.modelDiscoveryEnabled).toBe(true);
     expect(desktop.inferenceModels)
       .toEqual([{ name: "desktop-before-model", supports1m: true }]);
-    expect(await adapter.gatewayOwnership(
+    expect(await cliAdapter.gatewayOwnership(
       emptyProfile,
       "gateway-secret",
       undefined,
-      { gateway: true, baseline },
+      { gateway: true, baseline: cliBaseline },
+    )).toBe(GATEWAY_OWNERSHIP.OWNED);
+    expect(await desktopAdapter.gatewayOwnership(
+      emptyDesktopProfile,
+      "gateway-secret",
+      undefined,
+      { gateway: true, baseline: desktopBaseline },
     )).toBe(GATEWAY_OWNERSHIP.OWNED);
 
     native.env.ANTHROPIC_MODEL = "native-runtime-model";
     await seed(paths.claude.config, `${JSON.stringify(native, null, 2)}\n`);
-    expect(await adapter.gatewayOwnership(
+    expect(await cliAdapter.gatewayOwnership(
       emptyProfile,
       "gateway-secret",
       undefined,
-      { gateway: true, baseline },
+      { gateway: true, baseline: cliBaseline },
     )).toBe(GATEWAY_OWNERSHIP.CONFLICT);
 
     await writeDrafts(emptyDrafts);
@@ -634,19 +663,72 @@ describe("client adapters", () => {
     changedVsCode["claudeCode.environmentVariables"]
       .find((entry) => entry.name === "ANTHROPIC_MODEL").value = "vscode-runtime-model";
     await seed(vscodeConfig, `${JSON.stringify(changedVsCode, null, 2)}\n`);
-    expect(await adapter.gatewayOwnership(
+    expect(await cliAdapter.gatewayOwnership(
       emptyProfile,
       "gateway-secret",
       undefined,
-      { gateway: true, baseline },
+      { gateway: true, baseline: cliBaseline },
     )).toBe(GATEWAY_OWNERSHIP.CONFLICT);
 
-    await writeDrafts(emptyDrafts);
+    await writeDrafts(emptyDesktopDrafts);
     const changedDesktop = parse(await fs.readFile(desktopConfig, "utf8"));
     changedDesktop.inferenceModels = ["desktop-runtime-model"];
     await seed(desktopConfig, `${JSON.stringify(changedDesktop, null, 2)}\n`);
+    expect(await desktopAdapter.gatewayOwnership(
+      emptyDesktopProfile,
+      "gateway-secret",
+      undefined,
+      { gateway: true, baseline: desktopBaseline },
+    )).toBe(GATEWAY_OWNERSHIP.CONFLICT);
+  });
+
+  it("writes Claude Desktop inferenceModels from the profile model routes", async () => {
+    const desktopConfig = path.join(root, "Claude-3p", "configLibrary", "active.json");
+    await seed(desktopConfig, JSON.stringify({
+      inferenceProvider: "gateway",
+      inferenceGatewayBaseUrl: "https://before.example",
+      inferenceCredentialKind: "interactive",
+    }));
+    const adapter = createAdapters({
+      ...paths,
+      "claude-desktop": { config: desktopConfig },
+    })["claude-desktop"];
+    const baseline = await adapter.captureManagedState();
+    const profile = {
+      ...baseProfile,
+      baseUrl: "http://127.0.0.1:17863/claude-desktop",
+      model: "k3",
+      modelRoutes: {
+        "claude-sonnet-5": { model: "k3", labelOverride: "k3", supports1m: true },
+        "claude-opus-4-8": { model: "k3" },
+        "claude-haiku-4-5": { model: "k3-haiku", labelOverride: "k3 lite" },
+      },
+    };
+
+    await writeDrafts(await adapter.build(profile, "gateway-secret", {
+      gateway: true,
+      baseline,
+    }));
+    const configured = parse(await fs.readFile(desktopConfig, "utf8"));
+    expect(configured.inferenceModels).toEqual([
+      { name: "claude-sonnet-5", labelOverride: "k3", supports1m: true },
+      { name: "claude-opus-4-8", labelOverride: "k3", supports1m: false },
+      { name: "claude-haiku-4-5", labelOverride: "k3 lite", supports1m: false },
+    ]);
+    expect(configured.modelDiscoveryEnabled).toBe(true);
     expect(await adapter.gatewayOwnership(
-      emptyProfile,
+      profile,
+      "gateway-secret",
+      undefined,
+      { gateway: true, baseline },
+    )).toBe(GATEWAY_OWNERSHIP.OWNED);
+
+    // 只改显示名也算漂移：比较必须覆盖 labelOverride
+    const drifted = parse(await fs.readFile(desktopConfig, "utf8"));
+    drifted.inferenceModels[0].labelOverride = "renamed";
+    await seed(desktopConfig, `${JSON.stringify(drifted, null, 2)}\n`);
+    expect(await adapter.gatewayOwnership(
+      profile,
       "gateway-secret",
       undefined,
       { gateway: true, baseline },
@@ -655,7 +737,6 @@ describe("client adapters", () => {
 
   it("treats Claude Desktop string and named-object models as equivalent ownership", async () => {
     const desktopConfig = path.join(root, "Claude-3p", "configLibrary", "active.json");
-    await seed(paths.claude.config, "{}\n");
     await seed(desktopConfig, JSON.stringify({
       inferenceProvider: "gateway",
       inferenceGatewayBaseUrl: "https://before.example",
@@ -663,12 +744,12 @@ describe("client adapters", () => {
     }));
     const adapter = createAdapters({
       ...paths,
-      claude: { ...paths.claude, desktopConfig },
-    }).claude;
+      "claude-desktop": { config: desktopConfig },
+    })["claude-desktop"];
     const baseline = await adapter.captureManagedState();
     const profile = {
       ...baseProfile,
-      baseUrl: "http://127.0.0.1:17863/claude",
+      baseUrl: "http://127.0.0.1:17863/claude-desktop",
       model: "claude-sonnet-4-6",
     };
     await writeDrafts(await adapter.build(profile, "gateway-secret", {
@@ -1535,13 +1616,15 @@ wire_api = "responses"
     expect(resolved.claude.config).toBe(path.join(root, "claude-custom", "settings.json"));
     expect(resolved.claude.vscodeConfig)
       .toBe(path.join(appData, "Code", "User", "settings.json"));
-    expect(resolved.claude.desktopConfig).toBe(path.join(
+    expect(resolved.claude.desktopConfig).toBeUndefined();
+    expect(resolved.claude.desktopLibrary).toBeUndefined();
+    expect(resolved["claude-desktop"].config).toBe(path.join(
       localAppData,
       "Claude-3p",
       "configLibrary",
       `${desktopProfileId}.json`,
     ));
-    expect(resolved.claude.desktopLibrary)
+    expect(resolved["claude-desktop"].library)
       .toBe(path.join(localAppData, "Claude-3p", "configLibrary"));
     expect(resolved.codex.config).toBe(path.join(root, "codex-custom", "config.toml"));
     expect(resolved.gemini.env).toBe(path.join(root, "gemini-custom", ".env"));
@@ -1559,8 +1642,8 @@ wire_api = "responses"
 
     const resolved = resolveClientPaths({ LOCALAPPDATA: localAppData }, root);
 
-    expect(resolved.claude.desktopConfig).toBeUndefined();
-    expect(resolved.claude.desktopLibrary).toBe(desktopLibrary);
+    expect(resolved["claude-desktop"].config).toBeUndefined();
+    expect(resolved["claude-desktop"].library).toBe(desktopLibrary);
   });
 
   it.each([
@@ -1576,8 +1659,8 @@ wire_api = "responses"
 
     const resolved = resolveClientPaths({ LOCALAPPDATA: localAppData }, root);
 
-    expect(resolved.claude.desktopConfig).toBeUndefined();
-    expect(resolved.claude.desktopLibrary).toBe(desktopLibrary);
+    expect(resolved["claude-desktop"].config).toBeUndefined();
+    expect(resolved["claude-desktop"].library).toBe(desktopLibrary);
   });
 });
 

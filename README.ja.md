@@ -6,8 +6,8 @@ Windows のデスクトップ AI クライアント向け、ローカル API キ
 
 [简体中文](README.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [English](README.en.md)
 
-[![Release](https://img.shields.io/github/v/release/trygn35-ui/agentgate?style=flat-square)](https://github.com/trygn35-ui/agentgate/releases/latest)
-[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftrygn35-ui%2Fagentgate%2Fmain%2Fdocs%2Fdownload-count.json&style=flat-square)](https://github.com/trygn35-ui/agentgate/releases)
+[![Release](https://img.shields.io/github/v/release/tryyyyyygn/AgentGate?style=flat-square)](https://github.com/tryyyyyygn/AgentGate/releases/latest)
+[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftryyyyyygn%2FAgentGate%2Fmain%2Fdocs%2Fdownload-count.json&style=flat-square)](https://github.com/tryyyyyygn/AgentGate/releases)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-2F78D0?style=flat-square)](#ダウンロード)
 [![License](https://img.shields.io/badge/license-Community%20Use-FF9100?style=flat-square)](LICENSE)
 
@@ -40,10 +40,13 @@ Agent;Gate は、その作業をローカルの Windows アプリにまとめま
 | --- | --- | --- |
 | Codex | 安定 | OpenAI Responses、Chat Completions |
 | Claude Code | 実験的 | Anthropic Messages |
+| Claude Code デスクトップ版 | 実験的 | Anthropic Messages（モデルマッピング対応） |
 | OpenCode | 実験的 | Anthropic、OpenAI、Gemini |
 | Gemini CLI | 実験的 | Gemini |
 
 「実験的」は、クライアント側の設定形式が今後変わる可能性があるという意味です。Agent;Gate は管理対象のフィールドだけを書き換え、解除時に戻しますが、クライアントの大型アップデート後は設定を一度確認してください。
+
+Claude Code の CLI とデスクトップ版は独立したクライアントターゲットで、それぞれ別々に接管し、異なるプロファイルを割り当てられます。プロファイルの「モデルマッピング」は、クライアントから送られたモデル名を上流のモデル名に書き換えます——例えば Claude デスクトップ版の `claude-sonnet-5` などの各ティアをすべて Kimi For Coding の `k3` にマッピングできます。新規作成時には Kimi プリセットをそのまま選べます。
 
 ## ウォレットとキーグループ
 
@@ -66,7 +69,7 @@ Agent;Gate は、その作業をローカルの Windows アプリにまとめま
 
 ## ダウンロード
 
-[Releases](https://github.com/trygn35-ui/agentgate/releases/latest) から最新版を取得できます。
+[Releases](https://github.com/tryyyyyygn/AgentGate/releases/latest) から最新版を取得できます。
 
 | ファイル | 用途 |
 | --- | --- |

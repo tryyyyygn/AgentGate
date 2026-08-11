@@ -5,6 +5,7 @@ const {
   HealthSchema,
   HttpUrlSchema,
   MAX_PROFILE_ENDPOINTS,
+  ProfileRoutingSchema,
   SaveProfileSchema,
   normalizeHttpUrl,
   toPublicProfile,
@@ -18,6 +19,12 @@ const ProfileGroupNameSchema = z.string().trim().min(1, 'Group name is required'
 const ProfileIdsSchema = z.array(ProfileIdSchema).max(500)
 const ConnectionRevisionSchema = z.number().int().positive()
 const EMPTY_KEY_HINT = 'Not set'
+const DEFAULT_PROFILE_ROUTING = Object.freeze({
+  enabled: true,
+  disabledModels: [],
+  weight: 0,
+  autoDisableOnFailure: false,
+})
 
 const ProfileOrganizationSchema = z.object({
   groupIds: z.array(ProfileGroupIdSchema).max(500),
@@ -34,7 +41,7 @@ const ImportedProfileSchema = z.object({
   apiKey: z.string().trim().min(1).max(32768),
   model: z.string().trim().max(240).default(''),
   authMode: z.enum(['api-key', 'bearer']),
-  targets: z.array(z.enum(['claude', 'codex', 'opencode', 'gemini'])).min(1).max(4),
+  targets: z.array(z.enum(['claude', 'claude-desktop', 'codex', 'opencode', 'gemini'])).min(1).max(5),
 })
 
 const ImportProfilesSchema = z.object({
@@ -60,6 +67,10 @@ function tokenAccounting(profile) {
     if (profile?.[field] !== undefined) result[field] = profile[field]
   }
   return result
+}
+
+function profileRouting(profile) {
+  return ProfileRoutingSchema.parse(profile?.routing || DEFAULT_PROFILE_ROUTING)
 }
 const MAX_DISCOVERED_MODELS = 1_000
 const HEALTH_HISTORY_WINDOW_MS = 60 * 60_000
@@ -153,12 +164,17 @@ function stringSetsDiffer(left, right) {
   return leftSet.size !== rightSet.size || [...leftSet].some((value) => !rightSet.has(value))
 }
 
+function modelRoutesDiffer(left, right) {
+  return JSON.stringify(left || {}) !== JSON.stringify(right || {})
+}
+
 function decisionShapeChanged(existing, input, baseUrl, endpointUrls, suppliedKey) {
   if (!existing) return true
   if (suppliedKey) return true
   if (existing.protocol !== input.protocol || existing.authMode !== input.authMode) return true
   if (!sameUrl(existing.baseUrl, baseUrl)) return true
   if (existing.model !== input.model) return true
+  if (modelRoutesDiffer(existing.modelRoutes, input.modelRoutes)) return true
   if (existing.enableToolSearch !== input.enableToolSearch) return true
   if (stringSetsDiffer(existing.targets, input.targets)) return true
   const previous = new Set(existing.endpoints.map((endpoint) => comparableUrl(endpoint.url)))
@@ -219,6 +235,7 @@ function importedStoredProfile(input, groupId, profiles, vault, now) {
       healthTimeline: [],
     })),
     model: input.model,
+    modelRoutes: {},
     authMode: input.authMode,
     targets: [...new Set(input.targets)],
     enableToolSearch: false,
@@ -226,6 +243,7 @@ function importedStoredProfile(input, groupId, profiles, vault, now) {
       enabled: false,
       intervalMinutes: DEFAULT_AUTO_SWITCH_INTERVAL_MINUTES,
     },
+    routing: { ...DEFAULT_PROFILE_ROUTING, disabledModels: [] },
     connectionRevision: 1,
     keyHint: vault.hint(input.apiKey),
     encryptedKey: vault.encrypt(input.apiKey),
@@ -601,6 +619,7 @@ class ProfileService {
         baseUrl: activeEndpoint.url,
         endpoints,
         model: input.model,
+        modelRoutes: input.modelRoutes || {},
         authMode: input.authMode,
         targets: [...new Set(input.targets)],
         enableToolSearch: input.enableToolSearch,
@@ -608,6 +627,7 @@ class ProfileService {
           enabled: false,
           intervalMinutes: DEFAULT_AUTO_SWITCH_INTERVAL_MINUTES,
         },
+        routing: profileRouting(existing),
         connectionRevision: existing
           ? existing.connectionRevision + (connectionChanged ? 1 : 0)
           : 1,
@@ -669,6 +689,7 @@ class ProfileService {
           healthTimeline: [],
         })),
         model: source.model,
+        modelRoutes: structuredClone(source.modelRoutes || {}),
         authMode: source.authMode,
         targets: [...source.targets],
         enableToolSearch: source.enableToolSearch,
@@ -676,6 +697,7 @@ class ProfileService {
           enabled: false,
           intervalMinutes: source.autoSwitch.intervalMinutes,
         },
+        routing: profileRouting(source),
         connectionRevision: 1,
         keyHint: source.keyHint,
         encryptedKey: this.vault.encrypt(apiKey),
@@ -878,6 +900,47 @@ class ProfileService {
       health,
     }], profile.connectionRevision)
     return committed.profile
+  }
+
+  /**
+   * 更新仅供权重路由使用的公开方案策略。
+   *
+   * 识别到的模型仍由端点检测维护；这里保存的是用户明确禁用的模型集合，
+   * 因而后续识别到新模型时不会把它误判成用户已经选择的旧模型。
+   */
+  async updateRouting(id, rawRouting) {
+    const validatedId = profileId(id)
+    const routingResult = z.object({
+      enabled: z.boolean(),
+      enabledModels: z.array(z.string().trim().min(1).max(240)).max(MAX_DISCOVERED_MODELS),
+      weight: z.number().int().min(0).max(1_000_000),
+      autoDisableOnFailure: z.boolean(),
+    }).safeParse(rawRouting)
+    if (!routingResult.success) throw new Error(validationMessage(routingResult.error))
+
+    return this.serial.run(async () => {
+      const data = await this.store.read()
+      const index = data.profiles.findIndex((profile) => profile.id === validatedId)
+      if (index === -1) throw new Error('Profile not found')
+      const current = data.profiles[index]
+      const knownModels = new Set(current.endpoints.flatMap((endpoint) => endpoint.models || []))
+      const enabledModels = [...new Set(routingResult.data.enabledModels)]
+        .filter((model) => knownModels.has(model))
+      const next = {
+        ...current,
+        routing: {
+          ...profileRouting(current),
+          enabled: routingResult.data.enabled,
+          disabledModels: [...knownModels].filter((model) => !enabledModels.includes(model)),
+          weight: routingResult.data.weight,
+          autoDisableOnFailure: routingResult.data.autoDisableOnFailure,
+        },
+        updatedAt: new Date().toISOString(),
+      }
+      data.profiles[index] = next
+      await this.store.write(data)
+      return toPublicProfile(next)
+    })
   }
 
   /**

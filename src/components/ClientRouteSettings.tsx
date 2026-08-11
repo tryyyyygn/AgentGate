@@ -245,7 +245,7 @@ export function ClientRouteSettings({
                             disabled={busy || saving || (draft.enabled && current)}
                             onChange={(event) => setCandidate(profile.id, event.target.checked)}
                           />
-                          <span title={profile.name}>{profile.name}</span>
+                          <span>{profile.name}</span>
                           <small>{current ? m.status.failoverCurrent : PROTOCOL_META[profile.protocol].short}</small>
                         </label>
                       );

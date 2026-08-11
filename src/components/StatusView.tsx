@@ -7,7 +7,6 @@ import {
   Play,
   Radio,
   RefreshCw,
-  Settings2,
   TriangleAlert,
   X,
   Zap,
@@ -481,7 +480,7 @@ export function FailoverDialog({
                             disabled={busy || (targetSettings.enabled && current)}
                             onChange={(event) => setProfileAllowed(target, profile.id, event.target.checked)}
                           />
-                          <span title={profile.name}>{profile.name}</span>
+                          <span>{profile.name}</span>
                           {current && <small>{m.status.failoverCurrent}</small>}
                         </label>
                       );
@@ -539,7 +538,6 @@ export function StatusView({
   const [running, setRunning] = useState(false);
   const [nextProbeAt, setNextProbeAt] = useState(() => Date.now() + intervalMs);
   const [clockMs, setClockMs] = useState(Date.now);
-  const [failoverOpen, setFailoverOpen] = useState(false);
   const profilesRef = useRef(profiles);
   const disabledRef = useRef(disabledIds);
   const probeModelsRef = useRef(probeModels);
@@ -671,6 +669,13 @@ export function StatusView({
     () => profiles.filter((profile) => !disabledIds.has(profile.id)),
     [disabledIds, profiles],
   );
+  const orderedProfiles = useMemo(
+    () => [
+      ...profiles.filter((profile) => !disabledIds.has(profile.id)),
+      ...profiles.filter((profile) => disabledIds.has(profile.id)),
+    ],
+    [disabledIds, profiles],
+  );
   const summary = useMemo(() => {
     const counts: Record<ProbeState, number> = {
       healthy: 0,
@@ -726,17 +731,6 @@ export function StatusView({
             <h1>{m.status.title}</h1>
           </div>
           <div className="status-controls">
-            <button
-              type="button"
-              className="ghost-pill status-failover"
-              aria-haspopup="dialog"
-              aria-expanded={failoverOpen}
-              disabled={!onSettingsChange}
-              onClick={() => setFailoverOpen(true)}
-            >
-              <Settings2 size={13} />
-              {m.status.failover}
-            </button>
             <label className="status-interval">
               <Clock3 size={13} />
               <span>{m.status.interval}</span>
@@ -815,7 +809,7 @@ export function StatusView({
               <span role="columnheader">{m.status.lastCheck}</span>
               <span role="columnheader">{m.status.action}</span>
             </div>
-            {profiles.map((profile) => {
+            {orderedProfiles.map((profile) => {
               const record = records[profile.id] ?? { samples: [], checking: false };
               const disabled = disabledIds.has(profile.id);
               const state = record.error ? "unhealthy" : probeState(record.result);
@@ -858,7 +852,7 @@ export function StatusView({
                       <Radio size={12} />
                     </span>
                     <span className="status-row-name">
-                      <strong title={profile.name}>{profile.name}</strong>
+                      <strong>{profile.name}</strong>
                     </span>
                   </div>
 
@@ -868,7 +862,6 @@ export function StatusView({
                       value={selectedModel}
                       disabled={record.checking}
                       aria-label={fill(m.status.probeModelLabel, { name: profile.name })}
-                      title={model || undefined}
                       onChange={(event) => setProfileProbeModel(profile.id, event.target.value)}
                     >
                       <option value="">{fill(m.status.defaultModel, { model: defaultModel || "———" })}</option>
@@ -931,20 +924,6 @@ export function StatusView({
           </div>
         )}
       </div>
-      {failoverOpen && (
-        <FailoverDialog
-          profiles={profiles}
-          gateway={gateway}
-          settings={settings}
-          autoSwitch={autoSwitch}
-          busy={busy}
-          onClose={() => setFailoverOpen(false)}
-          onSave={(failover) => {
-            onSettingsChange?.({ failover });
-            setFailoverOpen(false);
-          }}
-        />
-      )}
     </main>
   );
 }

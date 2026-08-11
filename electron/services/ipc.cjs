@@ -4,6 +4,7 @@ const { SaveProfileSchema, TARGETS, validationMessage } = require('./schemas.cjs
 const CHANNELS = Object.freeze({
   bootstrap: 'agentgate:get-bootstrap',
   saveProfile: 'agentgate:save-profile',
+  updateProfileRouting: 'agentgate:update-profile-routing',
   duplicateProfile: 'agentgate:duplicate-profile',
   reorderProfiles: 'agentgate:reorder-profiles',
   createProfileGroup: 'agentgate:create-profile-group',
@@ -236,6 +237,11 @@ function registerIpcHandlers({
     } catch {}
     await gatewayService.refreshProfile(saved.id)
     return discovered
+  })
+  handle(CHANNELS.updateProfileRouting, async (_event, id, input) => {
+    const profile = await profileService.updateRouting(id, input)
+    await gatewayService.refreshProfile(id)
+    return profile
   })
   handle(CHANNELS.duplicateProfile, (_event, id) => profileService.duplicate(id))
   handle(CHANNELS.reorderProfiles, (_event, ids) => profileService.reorder(ids))

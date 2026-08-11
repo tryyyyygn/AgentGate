@@ -4,6 +4,8 @@ const { SerialExecutor } = require('./storage.cjs')
 const THEME_VALUES = ['system', 'light', 'dark']
 const LANGUAGE_VALUES = ['system', 'zh', 'zh-TW', 'ja', 'en']
 const SILENT_LAUNCH_FLAG = '--silent'
+const ROUTING_MODE_VALUES = ['assignment', 'weighted']
+const ROUTING_STRATEGY_VALUES = ['fixed', 'adaptive']
 
 const FailoverTargetSchema = z.object({
   enabled: z.boolean(),
@@ -12,6 +14,7 @@ const FailoverTargetSchema = z.object({
 
 const FailoverSettingsSchema = z.object({
   claude: FailoverTargetSchema.default(() => ({ enabled: false, profileIds: [] })),
+  'claude-desktop': FailoverTargetSchema.default(() => ({ enabled: false, profileIds: [] })),
   codex: FailoverTargetSchema.default(() => ({ enabled: false, profileIds: [] })),
   opencode: FailoverTargetSchema.default(() => ({ enabled: false, profileIds: [] })),
   gemini: FailoverTargetSchema.default(() => ({ enabled: false, profileIds: [] })),
@@ -20,6 +23,7 @@ const FailoverSettingsSchema = z.object({
 const FailoverTargetPatchSchema = FailoverTargetSchema.partial().strict()
 const FailoverSettingsPatchSchema = z.object({
   claude: FailoverTargetPatchSchema.optional(),
+  'claude-desktop': FailoverTargetPatchSchema.optional(),
   codex: FailoverTargetPatchSchema.optional(),
   opencode: FailoverTargetPatchSchema.optional(),
   gemini: FailoverTargetPatchSchema.optional(),
@@ -33,12 +37,22 @@ const SettingsSchema = z.object({
   theme: z.enum(THEME_VALUES),
   // 老版本写下的 settings.json 没有这个字段，缺省值让它继续可读。
   language: z.enum(LANGUAGE_VALUES).default('system'),
+  routing: z.object({
+    mode: z.enum(ROUTING_MODE_VALUES).default('assignment'),
+    strategy: z.enum(ROUTING_STRATEGY_VALUES).default('fixed'),
+  }).default(() => ({ mode: 'assignment', strategy: 'fixed' })),
   failover: FailoverSettingsSchema.default(() => defaultFailoverSettings()),
 })
 
 const SettingsPatchSchema = SettingsSchema
-  .omit({ version: true, failover: true })
+  .omit({ version: true, failover: true, routing: true })
   .partial()
+  .extend({
+    routing: z.object({
+      mode: z.enum(ROUTING_MODE_VALUES).optional(),
+      strategy: z.enum(ROUTING_STRATEGY_VALUES).optional(),
+    }).strict().optional(),
+  })
   .extend({ failover: FailoverSettingsPatchSchema.optional() })
   .strict()
 
@@ -50,6 +64,7 @@ function defaultSettings() {
     startGatewayOnLaunch: true,
     theme: 'system',
     language: 'system',
+    routing: { mode: 'assignment', strategy: 'fixed' },
     failover: defaultFailoverSettings(),
   }
 }
@@ -57,6 +72,7 @@ function defaultSettings() {
 function defaultFailoverSettings() {
   return {
     claude: { enabled: false, profileIds: [] },
+    'claude-desktop': { enabled: false, profileIds: [] },
     codex: { enabled: false, profileIds: [] },
     opencode: { enabled: false, profileIds: [] },
     gemini: { enabled: false, profileIds: [] },
@@ -153,6 +169,9 @@ class SettingsService {
           { ...previous.failover[target], ...(parsed.failover[target] || {}) },
         ]))
       }
+      if (parsed.routing) {
+        nextInput.routing = { ...previous.routing, ...parsed.routing }
+      }
       const next = SettingsSchema.parse(this._normalizeFailover(nextInput))
       if (next.launchAtLogin !== previous.launchAtLogin) {
         this._applyLaunchAtLogin(next.launchAtLogin)
@@ -209,6 +228,8 @@ class SettingsService {
 module.exports = {
   SILENT_LAUNCH_FLAG,
   LANGUAGE_VALUES,
+  ROUTING_MODE_VALUES,
+  ROUTING_STRATEGY_VALUES,
   SettingsSchema,
   SettingsPatchSchema,
   defaultSettings,

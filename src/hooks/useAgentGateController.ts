@@ -14,6 +14,7 @@ import type {
   ProfileGroup,
   ProfileOrganizationInput,
   SaveProfileInput,
+  UpdateProfileRoutingInput,
   StateChangedEvent,
 } from "../types";
 import type { BusyAction, ToastState } from "../ui-types";
@@ -44,6 +45,7 @@ export interface AgentGateController {
   setToast: (toast?: ToastState) => void;
   refresh: () => Promise<void>;
   saveProfile: (input: SaveProfileInput) => Promise<Profile | undefined>;
+  updateProfileRouting: (id: string, input: UpdateProfileRoutingInput) => Promise<boolean>;
   duplicateProfile: (profile: Profile) => Promise<Profile | undefined>;
   reorderProfiles: (ids: string[]) => Promise<void>;
   saveProfileGroup: (
@@ -359,6 +361,42 @@ export function useAgentGateController(): AgentGateController {
       setToast({ kind: "error", message: describeError(error) });
     } finally {
       commandLock.current = false;
+    }
+  }
+
+  async function updateProfileRouting(id: string, input: UpdateProfileRoutingInput): Promise<boolean> {
+    if (commandLock.current || !api.updateProfileRouting) return false;
+    commandLock.current = true;
+    setBusy("settings");
+    setBusyId(id);
+    const previous = data.profiles.find((profile) => profile.id === id);
+    setData((current) => ({
+      ...current,
+      profiles: current.profiles.map((profile) => profile.id === id
+        ? { ...profile, routing: { ...input } }
+        : profile),
+    }));
+    try {
+      const next = await api.updateProfileRouting(id, input);
+      setData((current) => ({
+        ...current,
+        profiles: current.profiles.map((profile) => profile.id === id ? next : profile),
+      }));
+      setToast({ kind: "success", message: m.current.toast.settingsSaved });
+      return true;
+    } catch (error) {
+      if (previous) {
+        setData((current) => ({
+          ...current,
+          profiles: current.profiles.map((profile) => profile.id === id ? previous : profile),
+        }));
+      }
+      setToast({ kind: "error", message: describeError(error) });
+      return false;
+    } finally {
+      commandLock.current = false;
+      setBusy(null);
+      setBusyId(undefined);
     }
   }
 
@@ -851,6 +889,7 @@ export function useAgentGateController(): AgentGateController {
     setToast,
     refresh,
     saveProfile,
+    updateProfileRouting,
     duplicateProfile,
     reorderProfiles,
     saveProfileGroup,

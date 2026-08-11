@@ -7,9 +7,9 @@ const ERROR_MESSAGE_LIMIT = 240
 const FAILOVER_FAILURE_THRESHOLD = 3
 const FAILOVER_COOLDOWN_MS = 60_000
 const FAILOVER_DECISION_HISTORY_LIMIT = 20
-const FAILOVER_TARGETS = new Set(['claude', 'codex', 'opencode', 'gemini'])
+const FAILOVER_TARGETS = new Set(['claude', 'claude-desktop', 'codex', 'opencode', 'gemini'])
 const PROFILE_TARGETS = {
-  anthropic: new Set(['claude', 'opencode']),
+  anthropic: new Set(['claude', 'claude-desktop', 'opencode']),
   'openai-responses': new Set(['codex', 'opencode']),
   'openai-chat': new Set(['codex', 'opencode']),
   gemini: new Set(['gemini', 'opencode']),

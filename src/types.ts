@@ -4,7 +4,12 @@ export type Protocol =
   | "openai-chat"
   | "gemini";
 
-export type ClientTarget = "claude" | "codex" | "opencode" | "gemini";
+export type ClientTarget =
+  | "claude"
+  | "claude-desktop"
+  | "codex"
+  | "opencode"
+  | "gemini";
 
 export type AuthMode = "api-key" | "bearer";
 
@@ -39,6 +44,22 @@ export interface AutoSwitchSettings {
   intervalMinutes: number;
 }
 
+export interface ProfileRoutingSettings {
+  enabled: boolean;
+  enabledModels: string[];
+  weight: number;
+  autoDisableOnFailure: boolean;
+}
+
+/** 客户端发来的模型到上游模型的映射；labelOverride/supports1m 仅用于桌面客户端配置展示。 */
+export interface ModelRoute {
+  model: string;
+  labelOverride?: string;
+  supports1m?: boolean;
+}
+
+export type ModelRoutes = Record<string, ModelRoute>;
+
 export interface Profile {
   id: string;
   groupId?: string;
@@ -49,10 +70,12 @@ export interface Profile {
   availableModels: string[];
   keyHint: string;
   model: string;
+  modelRoutes: ModelRoutes;
   authMode: AuthMode;
   targets: ClientTarget[];
   enableToolSearch?: boolean;
   autoSwitch: AutoSwitchSettings;
+  routing: ProfileRoutingSettings;
   createdAt: string;
   updatedAt: string;
   lastAppliedAt?: string;
@@ -83,10 +106,18 @@ export interface SaveProfileInput {
   endpoints: Array<{ url: string }>;
   apiKey?: string;
   model: string;
+  modelRoutes: ModelRoutes;
   authMode: AuthMode;
   targets: ClientTarget[];
   enableToolSearch?: boolean;
   autoSwitch: AutoSwitchSettings;
+}
+
+export interface UpdateProfileRoutingInput {
+  enabled: boolean;
+  enabledModels: string[];
+  weight: number;
+  autoDisableOnFailure: boolean;
 }
 
 export interface ProfileGroup {
@@ -194,6 +225,10 @@ export interface AppSettings {
   startGatewayOnLaunch: boolean;
   theme: AppTheme;
   language: AppLanguage;
+  routing: {
+    mode: "assignment" | "weighted";
+    strategy: "fixed" | "adaptive";
+  };
   failover: Record<ClientTarget, ClientFailoverSettings>;
 }
 
@@ -350,6 +385,19 @@ export interface RequestTokenUsage {
   totalTokens?: number;
 }
 
+/** 仅用于定位网关转发阶段，不含请求正文或凭据。 */
+export interface RequestTransportTiming {
+  clientRequestBytes?: number;
+  clientRequestBodyCompletedAtMs?: number;
+  upstreamRequestBytes?: number;
+  upstreamRequestContentEncoding?: string;
+  upstreamRequestFinishedAtMs?: number;
+  upstreamResponseHeadersAtMs?: number;
+  upstreamResponseContentEncoding?: string;
+  upstreamFirstByteAtMs?: number;
+  upstreamResponseEndedAtMs?: number;
+}
+
 export interface ActiveRequest {
   id: string;
   client: ClientTarget | string;
@@ -364,11 +412,15 @@ export interface ActiveRequest {
   durationMs?: number;
   firstTokenLatencyMs?: number;
   firstByteLatencyMs?: number;
+  upstreamHttpVersion?: string;
   statusCode?: number;
   model?: string;
+  /** 命中模型映射后实际发往上游的模型。 */
+  upstreamModel?: string;
   reasoningEffort?: string;
   streaming?: boolean;
   outcome?: "completed" | "failed" | "aborted" | "cancelled";
+  transport?: RequestTransportTiming;
   tokenUsage?: RequestTokenUsage;
   receivedBytes?: number;
 }
@@ -556,6 +608,8 @@ export interface AgentGateBridge {
   getBootstrap(): Promise<BootstrapData>;
   /** 新建或更新方案；编辑时缺失 apiKey 表示保留现有密文。 */
   saveProfile(input: SaveProfileInput): Promise<Profile>;
+  /** 保存权重模式使用的公开密钥策略。 */
+  updateProfileRouting?(id: string, input: UpdateProfileRoutingInput): Promise<Profile>;
   /** 在主进程内复制方案设置并重新加密同一 Key。 */
   duplicateProfile(id: string): Promise<Profile>;
   /** 按给定顺序持久化方案排序。旧版 preload 可能暂未提供。 */

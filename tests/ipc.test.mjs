@@ -387,6 +387,23 @@ describe("IPC gateway coordination", () => {
     expect(result).toMatchObject({ id: profile.id });
   });
 
+  it("模型映射随方案校验：空上游模型拒绝，合法映射透传保存", async () => {
+    const { handlers, profile, dependencies } = createHarness();
+
+    await expect(handlers.get(CHANNELS.saveProfile)(null, saveInput(profile, {
+      modelRoutes: { "claude-sonnet-5": { model: "" } },
+    }))).rejects.toThrow();
+    expect(dependencies.profileService.save).not.toHaveBeenCalled();
+
+    const modelRoutes = {
+      "claude-sonnet-5": { model: "k3", labelOverride: "k3", supports1m: true },
+    };
+    await handlers.get(CHANNELS.saveProfile)(null, saveInput(profile, { modelRoutes }));
+    expect(dependencies.profileService.save).toHaveBeenCalledWith(
+      expect.objectContaining({ modelRoutes }),
+    );
+  });
+
   it("活动路由修改协议时先恢复客户端并解除旧路由", async () => {
     const route = { target: "codex", profileId: "00000000-0000-4000-8000-000000000901" };
     const { handlers, trace, profile, dependencies } = createHarness({ gatewayRoutes: [route] });

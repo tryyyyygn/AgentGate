@@ -2,6 +2,7 @@ const { z } = require('zod')
 
 const TARGET = Object.freeze({
   CLAUDE: 'claude',
+  CLAUDE_DESKTOP: 'claude-desktop',
   CODEX: 'codex',
   OPENCODE: 'opencode',
   GEMINI: 'gemini',
@@ -19,6 +20,7 @@ const AUTH_MODE = Object.freeze({
 const DEFAULT_AUTO_SWITCH_INTERVAL_MINUTES = 2
 const MAX_PROFILE_ENDPOINTS = 20
 const MAX_DISCOVERED_MODELS = 1_000
+const MAX_MODEL_ROUTES = 64
 const MAX_HEALTH_HISTORY = 30
 const MAX_HEALTH_TIMELINE = 60
 const TARGETS = Object.freeze(Object.values(TARGET))
@@ -93,6 +95,28 @@ const AutoSwitchSettingsSchema = z.object({
     .default(DEFAULT_AUTO_SWITCH_INTERVAL_MINUTES),
 })
 
+const ProfileRoutingSchema = z.object({
+  enabled: z.boolean().default(true),
+  disabledModels: z.array(z.string().trim().min(1).max(240))
+    .max(MAX_DISCOVERED_MODELS)
+    .default([]),
+  weight: z.number().int().min(0).max(1_000_000).default(0),
+  autoDisableOnFailure: z.boolean().default(false),
+})
+
+const ModelRouteTargetSchema = z.object({
+  model: z.string().trim().min(1).max(240),
+  labelOverride: z.string().trim().min(1).max(240).optional(),
+  supports1m: z.boolean().optional(),
+})
+
+const ModelRoutesSchema = z.record(
+  z.string().trim().min(1).max(240),
+  ModelRouteTargetSchema,
+).refine((value) => Object.keys(value).length <= MAX_MODEL_ROUTES, {
+  message: 'Too many model routes',
+})
+
 function refineConnectionUrls(value, context) {
   const connectionUrls = [value.baseUrl, ...(value.endpoints || []).map((endpoint) => endpoint.url)]
   for (const [index, rawUrl] of connectionUrls.entries()) {
@@ -144,6 +168,7 @@ const SaveProfileSchema = z.object({
   endpoints: z.array(EndpointInputSchema).min(1).max(MAX_PROFILE_ENDPOINTS).optional(),
   apiKey: z.string().max(32768).optional(),
   model: z.string().trim().max(240),
+  modelRoutes: ModelRoutesSchema.optional().default({}),
   authMode: AuthModeSchema,
   targets: z.array(TargetSchema).max(TARGETS.length).default([]),
   enableToolSearch: z.boolean().optional().default(false),
@@ -153,7 +178,7 @@ const SaveProfileSchema = z.object({
   }),
 }).superRefine((value, context) => {
   const compatibleTargets = {
-    [PROTOCOL.ANTHROPIC]: [TARGET.CLAUDE, TARGET.OPENCODE],
+    [PROTOCOL.ANTHROPIC]: [TARGET.CLAUDE, TARGET.CLAUDE_DESKTOP, TARGET.OPENCODE],
     [PROTOCOL.OPENAI_RESPONSES]: [TARGET.CODEX, TARGET.OPENCODE],
     [PROTOCOL.OPENAI_CHAT]: [TARGET.CODEX, TARGET.OPENCODE],
     [PROTOCOL.GEMINI]: [TARGET.GEMINI, TARGET.OPENCODE],
@@ -207,6 +232,13 @@ const StoredProfileSchema = LegacyStoredProfileSchema.extend({
   groupId: z.string().uuid().optional(),
   endpoints: z.array(StoredEndpointSchema).min(1).max(MAX_PROFILE_ENDPOINTS),
   autoSwitch: AutoSwitchSettingsSchema,
+  routing: ProfileRoutingSchema.default(() => ({
+    enabled: true,
+    disabledModels: [],
+    weight: 0,
+    autoDisableOnFailure: false,
+  })),
+  modelRoutes: ModelRoutesSchema.default({}),
   connectionRevision: z.number().int().positive(),
   modelsCheckedAt: z.string().optional(),
   tokenUsageTotal: z.number().int().nonnegative().optional(),
@@ -236,6 +268,12 @@ const VersionTwoProfileStoreSchema = z.object({
 })
 
 const CurrentProfileStoreSchema = z.object({
+  version: z.literal(4),
+  groups: z.array(ProfileGroupSchema).max(500),
+  profiles: z.array(StoredProfileSchema),
+})
+
+const VersionThreeProfileStoreSchema = z.object({
   version: z.literal(3),
   groups: z.array(ProfileGroupSchema).max(500),
   profiles: z.array(StoredProfileSchema),
@@ -258,11 +296,31 @@ function migrateProfilesToGroups(profiles) {
   }
 }
 
+// v3 的 claude 目标同时覆盖 CLI 和桌面端；v4 拆出 claude-desktop 后，
+// anthropic 方案补上桌面目标以保持拆分前的服务范围。
+function migrateProfilesToDesktopTarget(store) {
+  return {
+    ...store,
+    version: 4,
+    profiles: store.profiles.map((profile) => {
+      if (profile.protocol !== PROTOCOL.ANTHROPIC) return profile
+      if (!profile.targets.includes(TARGET.CLAUDE)) return profile
+      if (profile.targets.includes(TARGET.CLAUDE_DESKTOP)) return profile
+      const targets = [...profile.targets]
+      targets.splice(targets.indexOf(TARGET.CLAUDE) + 1, 0, TARGET.CLAUDE_DESKTOP)
+      return { ...profile, targets }
+    }),
+  }
+}
+
 const ProfileStoreSchema = z.union([
   CurrentProfileStoreSchema,
-  VersionTwoProfileStoreSchema.transform((store) => migrateProfilesToGroups(store.profiles)),
-  LegacyProfileStoreSchema.transform((store) => migrateProfilesToGroups(
-    store.profiles.map((profile) => ({
+  VersionThreeProfileStoreSchema.transform(migrateProfilesToDesktopTarget),
+  VersionTwoProfileStoreSchema.transform((store) => migrateProfilesToDesktopTarget(
+    migrateProfilesToGroups(store.profiles),
+  )),
+  LegacyProfileStoreSchema.transform((store) => migrateProfilesToDesktopTarget(
+    migrateProfilesToGroups(store.profiles.map((profile) => ({
       ...profile,
       endpoints: [{
         url: profile.baseUrl,
@@ -276,7 +334,7 @@ const ProfileStoreSchema = z.union([
         intervalMinutes: DEFAULT_AUTO_SWITCH_INTERVAL_MINUTES,
       },
       connectionRevision: 1,
-    })),
+    }))),
   )),
 ])
 
@@ -346,6 +404,9 @@ function toPublicProfile(profile) {
     endpoint.url.replace(/\/+$/, '') === profile.baseUrl.replace(/\/+$/, '')
   )) || endpoints[0]
 
+  const routing = ProfileRoutingSchema.parse(profile.routing || {})
+  const disabledModels = new Set(routing.disabledModels)
+  const enabledModels = (activeEndpoint.models || []).filter((model) => !disabledModels.has(model))
   return {
     ...publicProfile,
     baseUrl: activeEndpoint.url,
@@ -355,6 +416,12 @@ function toPublicProfile(profile) {
       intervalMinutes: DEFAULT_AUTO_SWITCH_INTERVAL_MINUTES,
     },
     availableModels: activeEndpoint.models || [],
+    routing: {
+      enabled: routing.enabled,
+      enabledModels,
+      weight: routing.weight,
+      autoDisableOnFailure: routing.autoDisableOnFailure,
+    },
     ...(activeEndpoint.health ? { health: activeEndpoint.health } : {}),
   }
 }
@@ -415,6 +482,8 @@ module.exports = {
   HealthHistorySchema,
   StoredEndpointSchema,
   AutoSwitchSettingsSchema,
+  ProfileRoutingSchema,
+  ModelRoutesSchema,
   ProfileConnectionSchema,
   normalizeHttpUrl,
   SaveProfileSchema,

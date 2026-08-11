@@ -19,13 +19,17 @@ import {
   BLANK_PROFILE_INPUT,
   CLIENT_META,
   CLIENT_TARGET_ORDER,
+  PROFILE_PRESETS,
   PROTOCOL_META,
 } from "../config";
+import type { ProfilePreset } from "../config";
 import { useI18n } from "../i18n";
 import type { Messages } from "../i18n";
 import { normalizeHttpUrl } from "../lib/url";
+import { ClientIcon } from "./ClientIcon";
 import type {
   ClientTarget,
+  ModelRoutes,
   Profile,
   ProfileEndpoint,
   ProfileGroup,
@@ -49,6 +53,38 @@ interface ProfileEditorProps {
 
 /** 校验结果用错误码表示——文案是翻译的，定位逻辑不能依赖文案。 */
 type ValidationCode = keyof Messages["errors"];
+
+/** 映射表的一行：允许两端都为空的半成品行，提交前才过滤。 */
+interface RouteRow {
+  from: string;
+  model: string;
+  labelOverride: string;
+  supports1m: boolean;
+}
+
+function rowsFromModelRoutes(routes: ModelRoutes | undefined): RouteRow[] {
+  return Object.entries(routes || {}).map(([from, route]) => ({
+    from,
+    model: route.model,
+    labelOverride: route.labelOverride ?? "",
+    supports1m: Boolean(route.supports1m),
+  }));
+}
+
+function modelRoutesFromRows(rows: RouteRow[]): ModelRoutes {
+  const routes: ModelRoutes = {};
+  for (const row of rows) {
+    const from = row.from.trim();
+    const model = row.model.trim();
+    if (!from || !model) continue;
+    routes[from] = {
+      model,
+      ...(row.labelOverride.trim() ? { labelOverride: row.labelOverride.trim() } : {}),
+      ...(row.supports1m ? { supports1m: true } : {}),
+    };
+  }
+  return routes;
+}
 
 /** 出错时把焦点送回哪个字段；用 data-field 定位，不受语言影响。 */
 const ERROR_FIELD: Partial<Record<ValidationCode, string>> = {
@@ -79,6 +115,9 @@ function createEditorInput(profile?: Profile, defaultGroupId?: string): SaveProf
     endpoints: profile.endpoints.map((endpoint) => ({ url: endpoint.url })),
     apiKey: "",
     model: profile.model,
+    modelRoutes: Object.fromEntries(
+      Object.entries(profile.modelRoutes || {}).map(([from, route]) => [from, { ...route }]),
+    ),
     authMode: profile.authMode,
     targets: [...profile.targets],
     enableToolSearch: profile.enableToolSearch,
@@ -138,6 +177,7 @@ function normalizeProfileInput(form: SaveProfileInput): SaveProfileInput {
     endpoints,
     apiKey: form.apiKey?.trim() || undefined,
     model: form.model.trim(),
+    modelRoutes: modelRoutesFromRows(rowsFromModelRoutes(form.modelRoutes)),
   };
 }
 
@@ -178,6 +218,9 @@ export function ProfileEditor({
   const [error, setError] = useState<ValidationCode>();
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [models, setModels] = useState<string[]>(() => profile?.availableModels ?? []);
+  const [routeRows, setRouteRows] = useState<RouteRow[]>(
+    () => rowsFromModelRoutes(initialForm.current.modelRoutes),
+  );
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   /** 用户在模型框里主动键入的搜索词；undefined 表示未搜索，此时列出全部模型。 */
   const [modelQuery, setModelQuery] = useState<string>();
@@ -289,6 +332,33 @@ export function ProfileEditor({
   ): void {
     setForm((current) => ({ ...current, [key]: value }));
     setError(undefined);
+  }
+
+  function applyPreset(preset: ProfilePreset): void {
+    setForm((current) => ({
+      ...current,
+      name: current.name.trim() ? current.name : preset.input.name ?? current.name,
+      protocol: preset.input.protocol,
+      baseUrl: preset.input.baseUrl,
+      endpoints: [{ url: preset.input.baseUrl }],
+      model: preset.input.model ?? current.model,
+      modelRoutes: { ...(preset.input.modelRoutes ?? {}) },
+      authMode: preset.input.authMode,
+      targets: [...preset.input.targets],
+    }));
+    setRouteRows(rowsFromModelRoutes(preset.input.modelRoutes));
+    setError(undefined);
+  }
+
+  function updateRouteRows(next: RouteRow[]): void {
+    setRouteRows(next);
+    update("modelRoutes", modelRoutesFromRows(next));
+  }
+
+  function patchRouteRow(index: number, patch: Partial<RouteRow>): void {
+    updateRouteRows(routeRows.map((row, rowIndex) => (
+      rowIndex === index ? { ...row, ...patch } : row
+    )));
   }
 
   function changeProtocol(protocol: Protocol): void {
@@ -415,6 +485,24 @@ export function ProfileEditor({
             <div className="editor-error" role="alert">
               <AlertCircle size={14} />
               <span>{m.errors[error]}</span>
+            </div>
+          )}
+
+          {!profile && PROFILE_PRESETS.length > 0 && (
+            <div className="preset-row">
+              <span className="field-name">{m.editor.presets}</span>
+              <div className="preset-chips">
+                {PROFILE_PRESETS.map((preset) => (
+                  <button
+                    type="button"
+                    className="preset-chip"
+                    key={preset.id}
+                    onClick={() => applyPreset(preset)}
+                  >
+                    {preset.input.name ?? preset.id}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -676,6 +764,98 @@ export function ProfileEditor({
             )}
           </div>
 
+          {form.protocol !== "gemini" && (
+            <div className="editor-section ruled">
+              <span className="field-name">
+                {m.editor.modelRoutes}
+                <small>{m.editor.modelRoutesHint}</small>
+              </span>
+              {routeRows.length > 0 && (
+                <div className="route-table" role="group" aria-label={m.editor.modelRoutes}>
+                  <div className="route-row route-head" aria-hidden="true">
+                    <span>{m.editor.routeClient}</span>
+                    <span>{m.editor.routeUpstream}</span>
+                    <span>{m.editor.routeLabel}</span>
+                    <span>{m.editor.route1m}</span>
+                    <span />
+                  </div>
+                  {routeRows.map((row, index) => (
+                    <div className="route-row" key={index}>
+                      <input
+                        className="mono"
+                        aria-label={`${m.editor.routeClient} ${index + 1}`}
+                        value={row.from}
+                        placeholder="claude-sonnet-5"
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(event) => patchRouteRow(index, { from: event.target.value })}
+                      />
+                      <input
+                        className="mono"
+                        aria-label={`${m.editor.routeUpstream} ${index + 1}`}
+                        value={row.model}
+                        placeholder="k3"
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(event) => patchRouteRow(index, { model: event.target.value })}
+                      />
+                      <input
+                        aria-label={`${m.editor.routeLabel} ${index + 1}`}
+                        value={row.labelOverride}
+                        placeholder={row.model.trim() || undefined}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(event) => patchRouteRow(index, {
+                          labelOverride: event.target.value,
+                        })}
+                      />
+                      <label className="route-1m" title={m.editor.route1m}>
+                        <input
+                          type="checkbox"
+                          className="switch-input"
+                          aria-label={`${m.editor.route1m} ${index + 1}`}
+                          checked={row.supports1m}
+                          onChange={(event) => patchRouteRow(index, {
+                            supports1m: event.target.checked,
+                          })}
+                        />
+                        <span
+                          className={`kd-switch small ${row.supports1m ? "checked" : ""}`}
+                          aria-hidden="true"
+                        >
+                          <span />
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        className="url-remove"
+                        title={`${m.editor.routeRemove} ${index + 1}`}
+                        aria-label={`${m.editor.routeRemove} ${index + 1}`}
+                        onClick={() => updateRouteRows(
+                          routeRows.filter((_, rowIndex) => rowIndex !== index),
+                        )}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="url-pool-foot">
+                <button
+                  type="button"
+                  className="add-url-pill"
+                  onClick={() => updateRouteRows([
+                    ...routeRows,
+                    { from: "", model: "", labelOverride: "", supports1m: false },
+                  ])}
+                >
+                  <Plus size={13} />{m.editor.routeAdd}
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="editor-section ruled">
             <span className="field-name">{m.editor.targets}</span>
             <div className="target-grid">
@@ -698,7 +878,10 @@ export function ProfileEditor({
                     />
                     <span className="target-check">{checked && <Check size={12} />}</span>
                     <span className="target-copy">
-                      <strong>{CLIENT_META[target].label}</strong>
+                      <strong>
+                        <ClientIcon target={target} size={13} />
+                        {CLIENT_META[target].label}
+                      </strong>
                       <small>{compatible ? m.editor.viaGateway : m.editor.incompatible}</small>
                     </span>
                   </label>

@@ -1,19 +1,59 @@
 import http from "node:http";
 import { once } from "node:events";
 import { createRequire } from "node:module";
+import { constants as zlibConstants, createGzip, gunzipSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const {
   ANTHROPIC_COUNT_BODY_LIMIT_BYTES,
   ANTHROPIC_COUNT_BODY_SLOTS,
+  CODEX_GZIP_MIN_BYTES,
   GatewayService,
   GatewayStoreSchema,
+  compressCodexRequestBodyForUpstream,
   conservativeAnthropicInputTokens,
   createRequestMetadataTap,
   defaultGatewayStore,
 } = require("../electron/services/gateway-service.cjs");
 const { RequestMonitorService } = require("../electron/services/request-monitor-service.cjs");
+
+it("只为已验证的 Lucen 大型 Codex 请求压缩正文", () => {
+  const body = Buffer.from(JSON.stringify({
+    model: "gpt-5.6-sol",
+    stream: true,
+    input: "compressible prompt ".repeat(CODEX_GZIP_MIN_BYTES),
+  }), "utf8");
+
+  const compressed = compressCodexRequestBodyForUpstream(
+    new URL("https://lucen.cc/responses"),
+    body,
+  );
+  expect(compressed.contentEncoding).toBe("gzip");
+  expect(compressed.body.length).toBeLessThan(body.length);
+  expect(gunzipSync(compressed.body).equals(body)).toBe(true);
+
+  const plus = compressCodexRequestBodyForUpstream(
+    new URL("https://lucen.plus/responses"),
+    body,
+  );
+  expect(plus.contentEncoding).toBe("gzip");
+  expect(gunzipSync(plus.body).equals(body)).toBe(true);
+
+  const otherUpstream = compressCodexRequestBodyForUpstream(
+    new URL("https://api.openai.com/v1/responses"),
+    body,
+  );
+  expect(otherUpstream.body).toBe(body);
+  expect(otherUpstream.contentEncoding).toBeUndefined();
+  const smallBody = Buffer.alloc(CODEX_GZIP_MIN_BYTES - 1, 1);
+  const belowThreshold = compressCodexRequestBodyForUpstream(
+    new URL("https://lucen.cc/responses"),
+    smallBody,
+  );
+  expect(belowThreshold.body).toBe(smallBody);
+  expect(belowThreshold.contentEncoding).toBeUndefined();
+});
 
 it("请求元数据 Tap 透明转发且只发布允许字段", async () => {
   const metadata = [];
@@ -252,6 +292,63 @@ async function localCredential(service, profile, target = "codex", apiKey = "ups
   return prepared.apiKey;
 }
 
+function weightedProfile(id, baseUrl, {
+  name = id,
+  models = ["model-a"],
+  enabledModels = models,
+  weight = 0,
+  autoDisableOnFailure = false,
+} = {}) {
+  return {
+    id,
+    name,
+    protocol: "openai-chat",
+    authMode: "bearer",
+    baseUrl,
+    endpoints: [{ url: baseUrl, models }],
+    availableModels: models,
+    targets: ["codex"],
+    routing: {
+      enabled: true,
+      enabledModels,
+      weight,
+      autoDisableOnFailure,
+    },
+  };
+}
+
+function weightedProfileService(initialProfiles, upstreamKeys = {}) {
+  let profiles = structuredClone(initialProfiles);
+  return {
+    list: vi.fn(async () => structuredClone(profiles)),
+    getConnection: vi.fn(async (id) => {
+      const profile = profiles.find((item) => item.id === id);
+      if (!profile) throw new Error("Profile not found");
+      return { profile: structuredClone(profile), apiKey: upstreamKeys[id] || `key-${id}` };
+    }),
+    updateRouting: vi.fn(async (id, routing) => {
+      profiles = profiles.map((profile) => profile.id === id
+        ? { ...profile, routing: { ...profile.routing, ...routing } }
+        : profile);
+      return structuredClone(profiles.find((profile) => profile.id === id));
+    }),
+  };
+}
+
+async function createWeightedGateway(profiles, options = {}) {
+  const routing = options.routing || { mode: "weighted", strategy: "fixed" };
+  const profileService = weightedProfileService(profiles, options.upstreamKeys);
+  const service = new GatewayService({
+    profileService,
+    store: options.store || memoryStore(),
+    vault,
+    getRoutingSettings: () => ({ routing }),
+  });
+  activeServices.add(service);
+  await service.start({ port: 0, targets: ["codex"] });
+  return { service, profileService, routing };
+}
+
 afterEach(async () => {
   await Promise.all([...activeServices].map(async (service) => {
     try {
@@ -265,7 +362,175 @@ afterEach(async () => {
 });
 
 describe("GatewayService", () => {
-  it("将旧版或未知版本网关状态归一化为 staged routes 的 v4 结构", () => {
+  it("权重模式按模型可用性和权重选择渠道，并保持同一模型粘性", async () => {
+    const upstreamA = await listen((_request, response) => response.end("A"));
+    const upstreamB = await listen((_request, response) => response.end("B"));
+    const profileA = weightedProfile(PROFILE_A, upstreamA.baseUrl, { weight: 100 });
+    const profileB = weightedProfile(PROFILE_B, upstreamB.baseUrl, { weight: 10 });
+    const { service, profileService } = await createWeightedGateway([profileA, profileB]);
+    const url = `${service.getPublicState().localBaseUrls.codex}/chat/completions`;
+    const body = Buffer.from(JSON.stringify({ model: "model-a", input: "hello" }), "utf8");
+    const options = {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(body.length) },
+      body,
+    };
+
+    const first = await rawRequest(url, options);
+    const second = await rawRequest(url, options);
+
+    expect(first.status).toBe(200);
+    expect(first.body.toString()).toBe("A");
+    expect(second.body.toString()).toBe("A");
+    expect(profileService.getConnection).toHaveBeenCalledTimes(1);
+    expect(service.getPublicState().routes).toEqual([
+      { target: "codex", profileId: PROFILE_A },
+    ]);
+  });
+
+  it("权重模式排除未启用当前模型的高权重渠道", async () => {
+    const upstreamA = await listen((_request, response) => response.end("A"));
+    const upstreamB = await listen((_request, response) => response.end("B"));
+    const profileA = weightedProfile(PROFILE_A, upstreamA.baseUrl, {
+      models: ["model-a", "model-b"],
+      enabledModels: ["model-b"],
+      weight: 100,
+    });
+    const profileB = weightedProfile(PROFILE_B, upstreamB.baseUrl, { weight: 10 });
+    const { service } = await createWeightedGateway([profileA, profileB]);
+    const body = Buffer.from(JSON.stringify({ model: "model-a", input: "hello" }), "utf8");
+
+    const response = await rawRequest(
+      `${service.getPublicState().localBaseUrls.codex}/chat/completions`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": String(body.length) },
+        body,
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.toString()).toBe("B");
+  });
+
+  it("权重模式硬故障进入冷却后切换到下一渠道", async () => {
+    const upstreamA = await listen((_request, response) => {
+      response.writeHead(502);
+      response.end("failed");
+    });
+    const upstreamB = await listen((_request, response) => response.end("recovered"));
+    const profileA = weightedProfile(PROFILE_A, upstreamA.baseUrl, { weight: 100 });
+    const profileB = weightedProfile(PROFILE_B, upstreamB.baseUrl, { weight: 10 });
+    const { service } = await createWeightedGateway([profileA, profileB]);
+    const url = `${service.getPublicState().localBaseUrls.codex}/chat/completions`;
+    const body = Buffer.from(JSON.stringify({ model: "model-a", input: "hello" }), "utf8");
+    const options = {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(body.length) },
+      body,
+    };
+
+    const failed = await rawRequest(url, options);
+    const fallback = await rawRequest(url, options);
+
+    expect(failed.status).toBe(502);
+    expect(fallback.status).toBe(200);
+    expect(fallback.body.toString()).toBe("recovered");
+  });
+
+  it("连续三次硬故障按密钥设置自动停用渠道", async () => {
+    const upstream = await listen((_request, response) => {
+      response.writeHead(502);
+      response.end("failed");
+    });
+    const profile = weightedProfile(PROFILE_A, upstream.baseUrl, {
+      weight: 100,
+      autoDisableOnFailure: true,
+    });
+    const { service, profileService } = await createWeightedGateway([profile]);
+    const url = `${service.getPublicState().localBaseUrls.codex}/chat/completions`;
+    const body = Buffer.from(JSON.stringify({ model: "model-a", input: "hello" }), "utf8");
+    const options = {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(body.length) },
+      body,
+    };
+    const cooldownKey = `codex\0model-a\0${PROFILE_A}`;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect((await rawRequest(url, options)).status).toBe(502);
+      const state = service.weightedCooldowns.get(cooldownKey);
+      if (state) state.cooldownUntil = 0;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(profileService.updateRouting).toHaveBeenCalledWith(
+      PROFILE_A,
+      expect.objectContaining({ enabled: false }),
+    );
+    expect((await profileService.list()).find((item) => item.id === PROFILE_A)
+      .routing.enabled).toBe(false);
+  });
+
+  it("权重选择器异常时返回明确的临时不可用响应", async () => {
+    const upstream = await listen((_request, response) => response.end("ok"));
+    const profile = weightedProfile(PROFILE_A, upstream.baseUrl);
+    const { service, profileService } = await createWeightedGateway([profile]);
+    profileService.list.mockRejectedValueOnce(new Error("profiles unavailable"));
+
+    const response = await rawRequest(`${service.getPublicState().localBaseUrls.codex}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "model-a", input: "hello" }),
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body.toString()).toContain("Weighted routing is temporarily unavailable");
+  });
+
+  it("移除权重模式的接管客户端时清理旧锚点", async () => {
+    const upstream = await listen((_request, response) => response.end("ok"));
+    const profile = weightedProfile(PROFILE_A, upstream.baseUrl, { weight: 100 });
+    const { service } = await createWeightedGateway([profile]);
+    expect(service.getPublicState().routes).toEqual([
+      { target: "codex", profileId: PROFILE_A },
+    ]);
+
+    await service.setEngagedTargets([]);
+
+    expect(service.getPublicState().routes).toEqual([]);
+  });
+
+  it("权重模式不读取旧分配路由，运行中切换模式时刷新锚点", async () => {
+    const upstreamA = await listen((_request, response) => response.end("A"));
+    const upstreamB = await listen((_request, response) => response.end("B"));
+    const profileA = weightedProfile(PROFILE_A, upstreamA.baseUrl, { weight: 100 });
+    const profileB = weightedProfile(PROFILE_B, upstreamB.baseUrl, { weight: 10 });
+    const routing = { mode: "weighted", strategy: "fixed" };
+    const store = memoryStore({
+      ...defaultGatewayStore(),
+      targets: ["codex"],
+      engaged: ["codex"],
+      routes: { codex: PROFILE_B },
+    });
+    const { service } = await createWeightedGateway([profileA, profileB], { store, routing });
+
+    expect(service.getPublicState().routes).toEqual([
+      { target: "codex", profileId: PROFILE_A },
+    ]);
+    routing.mode = "assignment";
+    await service.refreshRouting();
+    expect(service.getPublicState().routes).toEqual([
+      { target: "codex", profileId: PROFILE_B },
+    ]);
+    routing.mode = "weighted";
+    await service.refreshRouting();
+    expect(service.getPublicState().routes).toEqual([
+      { target: "codex", profileId: PROFILE_A },
+    ]);
+  });
+
+  it("将旧版或未知版本网关状态归一化为 staged routes 的 v5 结构", () => {
     expect(GatewayStoreSchema.parse({
       version: 0,
       enabled: true,
@@ -277,7 +542,7 @@ describe("GatewayService", () => {
       encryptedToken: "ciphertext",
       legacyField: "ignored",
     })).toEqual({
-      version: 4,
+      version: 5,
       enabled: true,
       port: 17863,
       targets: ["codex"],
@@ -303,12 +568,33 @@ describe("GatewayService", () => {
         gemini: "  ",
       },
     })).toEqual({
-      version: 4,
+      version: 5,
       enabled: true,
       port: 17863,
-      targets: ["codex", "claude", "gemini"],
-      engaged: ["codex", "claude", "gemini"],
-      resumeTargets: ["codex", "claude", "gemini"],
+      targets: ["codex", "claude", "gemini", "claude-desktop"],
+      engaged: ["codex", "claude", "gemini", "claude-desktop"],
+      resumeTargets: ["codex", "claude", "gemini", "claude-desktop"],
+      // v5 之前的 claude 路由同时服务桌面端，拆分时继承给 claude-desktop
+      routes: { claude: PROFILE_A, "claude-desktop": PROFILE_A },
+    });
+  });
+
+  it("v5 之后 claude 与 claude-desktop 独立接管，不再互相继承", () => {
+    expect(GatewayStoreSchema.parse({
+      version: 5,
+      enabled: true,
+      port: 17863,
+      targets: ["claude"],
+      engaged: ["claude"],
+      resumeTargets: ["claude"],
+      routes: { claude: PROFILE_A },
+    })).toEqual({
+      version: 5,
+      enabled: true,
+      port: 17863,
+      targets: ["claude"],
+      engaged: ["claude"],
+      resumeTargets: ["claude"],
       routes: { claude: PROFILE_A },
     });
   });
@@ -820,7 +1106,7 @@ describe("GatewayService", () => {
     expect(receivedBodies.map((item) => item.stream)).toEqual([true, true, true]);
   });
 
-  it("Responses 默认流式会从第一次起协商 text/event-stream", async () => {
+  it("Responses 同步兼容与显式流式都协商 text/event-stream", async () => {
     let upstreamCalls = 0;
     const receivedHeaders = [];
     const receivedBodies = [];
@@ -872,17 +1158,147 @@ describe("GatewayService", () => {
       },
       body,
     };
+    const streamingBody = Buffer.from(JSON.stringify({
+      model: "gpt-5.6-sol",
+      stream: true,
+      input: "hello",
+    }), "utf8");
+    const customInstructionsBody = Buffer.from(JSON.stringify({
+      model: "gpt-5.6-sol",
+      stream: true,
+      instructions: "Keep these instructions.",
+      input: "hello",
+    }), "utf8");
 
     const first = await rawRequest(url, options);
     const second = await rawRequest(url, options);
+    const streaming = await rawRequest(url, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "content-length": String(streamingBody.length),
+      },
+      body: streamingBody,
+    });
+    const customInstructions = await rawRequest(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(customInstructionsBody.length),
+      },
+      body: customInstructionsBody,
+    });
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
+    expect(streaming.status).toBe(200);
+    expect(customInstructions.status).toBe(200);
     expect(JSON.parse(first.body.toString("utf8"))).toMatchObject({ id: "resp_accept" });
     expect(JSON.parse(second.body.toString("utf8"))).toMatchObject({ id: "resp_accept" });
-    expect(receivedBodies.map((item) => item.stream)).toEqual([true, true]);
-    expect(receivedHeaders[0].accept).toContain("text/event-stream");
-    expect(receivedHeaders[1].accept).toContain("text/event-stream");
+    expect(streaming.body.toString("utf8")).toContain("response.completed");
+    expect(receivedBodies.map((item) => item.stream)).toEqual([true, true, true, true]);
+    expect(receivedBodies.map((item) => item.instructions)).toEqual([
+      "You are a helpful coding assistant.",
+      "You are a helpful coding assistant.",
+      "You are a helpful coding assistant.",
+      "Keep these instructions.",
+    ]);
+    expect(receivedHeaders.every((headers) => (
+      headers.accept.includes("text/event-stream")
+    ))).toBe(true);
+    expect(receivedHeaders.every((headers) => (
+      headers["cache-control"] === "no-cache"
+        && headers["openai-beta"] === "responses=experimental"
+    ))).toBe(true);
+    expect(upstreamCalls).toBe(4);
+  });
+
+  it("Codex Responses 解压 gzip SSE 后立即转发给本地客户端", async () => {
+    const firstEvent = Buffer.from([
+      "event: response.output_text.delta\n",
+      'data: {"type":"response.output_text.delta","delta":"first"}\n\n',
+    ].join(""), "utf8");
+    const completedEvent = Buffer.from([
+      "event: response.completed\n",
+      'data: {"type":"response.completed","response":{"id":"resp_gzip","output":[]}}\n\n',
+    ].join(""), "utf8");
+    let receivedHeaders;
+    let releaseUpstreamEnd;
+    const upstream = await listen((request, response) => {
+      receivedHeaders = request.headers;
+      request.resume();
+      request.once("end", () => {
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "content-encoding": "gzip",
+        });
+        const gzip = createGzip({ flush: zlibConstants.Z_SYNC_FLUSH });
+        gzip.pipe(response);
+        releaseUpstreamEnd = () => gzip.end(completedEvent);
+        gzip.write(firstEvent);
+      });
+    });
+    const profile = {
+      id: PROFILE_A,
+      protocol: "openai-responses",
+      authMode: "bearer",
+      baseUrl: `${upstream.baseUrl}/v1`,
+      targets: ["codex"],
+    };
+    const monitor = new RequestMonitorService();
+    const { service } = await createGateway({
+      [PROFILE_A]: { profile, apiKey: "upstream-secret" },
+    }, { requestMonitor: monitor });
+    await service.activateRoutes(profile);
+    const body = Buffer.from(JSON.stringify({
+      model: "gpt-5.6-sol",
+      stream: true,
+      input: "hello",
+    }), "utf8");
+    const url = `${service.getPublicState().localBaseUrls.codex}/responses`;
+    let firstChunk;
+    let resolveFirstChunk;
+    const firstChunkPromise = new Promise((resolve) => { resolveFirstChunk = resolve; });
+    const responsePromise = new Promise((resolve, reject) => {
+      const request = http.request(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(body.length),
+        },
+      }, (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => {
+          const buffer = Buffer.from(chunk);
+          chunks.push(buffer);
+          if (!firstChunk) {
+            firstChunk = buffer;
+            resolveFirstChunk();
+          }
+        });
+        response.once("error", reject);
+        response.once("end", () => resolve({
+          status: response.statusCode,
+          headers: response.headers,
+          body: Buffer.concat(chunks),
+        }));
+      });
+      request.once("error", reject);
+      request.end(body);
+    });
+
+    await vi.waitFor(() => expect(releaseUpstreamEnd).toBeTypeOf("function"));
+    await firstChunkPromise;
+    expect(firstChunk.toString("utf8")).toContain("response.output_text.delta");
+    releaseUpstreamEnd();
+    const result = await responsePromise;
+
+    expect(receivedHeaders["accept-encoding"]).toBe("gzip");
+    expect(result.status).toBe(200);
+    expect(result.headers["content-encoding"]).toBeUndefined();
+    expect(result.body).toEqual(Buffer.concat([firstEvent, completedEvent]));
+    expect(monitor.list()[0].firstTokenLatencyMs).toEqual(expect.any(Number));
   });
 
   it("Responses 并发同步请求全部直接走流式，不发送 stream=false 探测", async () => {
@@ -1358,11 +1774,17 @@ describe("GatewayService", () => {
   });
 
   it("请求监控覆盖响应生命周期且不接触正文和认证", async () => {
+    let upstreamWriteFinished = false;
+    let measurementStartedAfterWrite = false;
     const monitor = {
       start: vi.fn().mockReturnValue("request-1"),
-    responseStarted: vi.fn(),
-    observeChunk: vi.fn(),
-    updateMetadata: vi.fn(),
+      recordTransport: vi.fn(),
+      upstreamRequestStarted: vi.fn(() => {
+        measurementStartedAfterWrite = upstreamWriteFinished;
+      }),
+      responseStarted: vi.fn(),
+      observeChunk: vi.fn(),
+      updateMetadata: vi.fn(),
       end: vi.fn(),
       list: vi.fn().mockReturnValue([{ id: "request-1" }]),
       clear: vi.fn(),
@@ -1370,6 +1792,17 @@ describe("GatewayService", () => {
     const upstream = await listen((_request, response) => {
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.end('data: {"type":"response.output_text.delta","delta":"ok"}\n\n');
+    });
+    const nativeRequest = http.request.bind(http);
+    const requestSpy = vi.spyOn(http, "request").mockImplementation((...args) => {
+      const forwardedRequest = nativeRequest(...args);
+      try {
+        const destination = args[0] instanceof URL ? args[0] : new URL(String(args[0]));
+        if (destination.port === String(upstream.port)) {
+          forwardedRequest.once("finish", () => { upstreamWriteFinished = true; });
+        }
+      } catch {}
+      return forwardedRequest;
     });
     const profile = {
       id: PROFILE_A,
@@ -1384,7 +1817,17 @@ describe("GatewayService", () => {
     }, { requestMonitor: monitor });
     await service.activateRoutes(profile);
 
-    const response = await rawRequest(`${service.getPublicState().localBaseUrls.codex}/responses`);
+    const requestBody = Buffer.from(JSON.stringify({ model: "gpt-test", stream: true }), "utf8");
+    let response;
+    try {
+      response = await rawRequest(`${service.getPublicState().localBaseUrls.codex}/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": String(requestBody.length) },
+        body: requestBody,
+      });
+    } finally {
+      requestSpy.mockRestore();
+    }
     expect(response.status).toBe(200);
     expect(monitor.start).toHaveBeenCalledWith(expect.objectContaining({
       client: "codex",
@@ -1399,6 +1842,16 @@ describe("GatewayService", () => {
     }));
     expect(JSON.stringify(monitor.start.mock.calls)).not.toContain("upstream-secret");
     expect(JSON.stringify(monitor.start.mock.calls)).not.toContain("private=query");
+    expect(monitor.upstreamRequestStarted).toHaveBeenCalledOnce();
+    expect(monitor.upstreamRequestStarted).toHaveBeenCalledWith("request-1");
+    expect(measurementStartedAfterWrite).toBe(true);
+    expect(monitor.recordTransport).toHaveBeenCalledWith("request-1", expect.objectContaining({
+      clientRequestBytes: requestBody.length,
+    }));
+    expect(monitor.recordTransport).toHaveBeenCalledWith("request-1", expect.objectContaining({
+      upstreamRequestBytes: expect.any(Number),
+      upstreamRequestContentEncoding: "identity",
+    }));
     expect(monitor.responseStarted).toHaveBeenCalledWith("request-1", expect.objectContaining({
       statusCode: 200,
       streaming: true,
@@ -1406,6 +1859,50 @@ describe("GatewayService", () => {
     expect(monitor.observeChunk).toHaveBeenCalled();
     expect(monitor.end).toHaveBeenCalledWith("request-1");
     expect(service.getActiveRequests()).toEqual([{ id: "request-1" }]);
+  });
+
+  it("Codex 实际转发的首字和总耗时共用上游起点", async () => {
+    const timestamps = [1_000, 2_500, 3_000, 4_000];
+    let timestampIndex = 0;
+    const monitor = new RequestMonitorService({
+      now: () => timestamps[Math.min(timestampIndex++, timestamps.length - 1)],
+    });
+    const upstream = await listen((request, response) => {
+      request.resume();
+      request.once("end", () => {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end(
+          'event: response.output_item.added\ndata: {"type":"response.output_item.added","item":{"type":"message","content":[]}}\n\n',
+        );
+      });
+    });
+    const profile = {
+      id: PROFILE_A,
+      name: "首字计时",
+      protocol: "openai-responses",
+      authMode: "bearer",
+      baseUrl: upstream.baseUrl,
+      targets: ["codex"],
+    };
+    const { service } = await createGateway({
+      [PROFILE_A]: { profile, apiKey: "upstream-key" },
+    }, { requestMonitor: monitor });
+    await service.activateRoutes(profile);
+    const body = Buffer.from(JSON.stringify({ model: "gpt-test", stream: true }), "utf8");
+
+    const response = await rawRequest(`${service.getPublicState().localBaseUrls.codex}/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(body.length) },
+      body,
+    });
+
+    expect(response.status).toBe(200);
+    expect(monitor.list()[0]).toMatchObject({
+      firstByteLatencyMs: 500,
+      firstTokenLatencyMs: 500,
+      durationMs: 3_000,
+      outcome: "completed",
+    });
   });
 
   it("真实请求监视器串联采集元数据、首 token 和 usage 且不公开正文或完整 Key", async () => {
@@ -1448,7 +1945,7 @@ describe("GatewayService", () => {
       }), "utf8"),
     });
     expect(response.status).toBe(200);
-    expect(upstreamHeaders["accept-encoding"]).toBe("identity");
+    expect(upstreamHeaders["accept-encoding"]).toBe("gzip");
     const [record] = monitor.list();
     expect(record).toMatchObject({
       profileName: "真实监控",
@@ -1765,6 +2262,147 @@ describe("GatewayService", () => {
     expect((await rawRequest(`${baseUrl}/ok`, { headers })).body.toString()).toBe("ok");
   });
 
+  it("上游 SSE 先提交响应头时网关立即向客户端 Flush 头部", async () => {
+    let resolveUpstreamHeaders;
+    const upstreamHeaders = new Promise((resolve) => {
+      resolveUpstreamHeaders = resolve;
+    });
+    let releaseBody;
+    const bodyGate = new Promise((resolve) => {
+      releaseBody = resolve;
+    });
+    const upstream = await listen((request, response) => {
+      request.resume();
+      request.once("end", async () => {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.flushHeaders();
+        resolveUpstreamHeaders();
+        await bodyGate;
+        response.end('data: {"type":"response.completed"}\n\n');
+      });
+    });
+    const profile = {
+      id: PROFILE_A,
+      protocol: "openai-responses",
+      authMode: "bearer",
+      baseUrl: upstream.baseUrl,
+      targets: ["codex"],
+    };
+    const { service } = await createGateway({
+      [PROFILE_A]: { profile, apiKey: "upstream-key" },
+    });
+    await service.activateRoutes(profile);
+    const url = `${service.getPublicState().localBaseUrls.codex}/responses`;
+    const body = Buffer.from(JSON.stringify({ model: "gpt-test", stream: true }), "utf8");
+    let bodyReceived = false;
+    let resolveDone;
+    const done = new Promise((resolve) => {
+      resolveDone = resolve;
+    });
+    let resolveHeaders;
+    const clientHeaders = new Promise((resolve) => {
+      resolveHeaders = resolve;
+    });
+    const client = http.request(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(body.length),
+      },
+    }, (response) => {
+      resolveHeaders(response.headers);
+      response.on("data", () => { bodyReceived = true; });
+      response.once("error", () => {});
+      response.once("end", resolveDone);
+    });
+    client.once("error", (error) => {
+      if (error.code !== "ECONNRESET") throw error;
+    });
+    client.end(body);
+
+    await upstreamHeaders;
+    const headers = await Promise.race([
+      clientHeaders,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("SSE headers were not flushed")), 1_000)),
+    ]);
+    expect(headers["content-type"]).toContain("text/event-stream");
+    expect(headers["x-accel-buffering"]).toBe("no");
+    expect(bodyReceived).toBe(false);
+
+    releaseBody();
+    await done;
+  });
+
+  it("客户端中断流式响应时立即关闭上游连接", async () => {
+    const onRequestEnded = vi.fn();
+    const monitor = new RequestMonitorService({ onRequestEnded });
+    let resolveUpstreamClose;
+    const upstreamClosed = new Promise((resolve) => {
+      resolveUpstreamClose = resolve;
+    });
+    const upstream = await listen((request, response) => {
+      request.resume();
+      request.once("end", () => {
+        response.once("close", () => {
+          resolveUpstreamClose({
+            destroyed: response.destroyed,
+            writableEnded: response.writableEnded,
+          });
+        });
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write('data: {"type":"response.created"}\n\n');
+      });
+    });
+    const profile = {
+      id: PROFILE_A,
+      protocol: "openai-responses",
+      authMode: "bearer",
+      baseUrl: upstream.baseUrl,
+      targets: ["codex"],
+    };
+    const { service } = await createGateway({
+      [PROFILE_A]: { profile, apiKey: "upstream-key" },
+    }, { requestMonitor: monitor });
+    await service.activateRoutes(profile);
+    const url = `${service.getPublicState().localBaseUrls.codex}/responses`;
+    const body = Buffer.from(JSON.stringify({ model: "gpt-test", stream: true }), "utf8");
+
+    await new Promise((resolve, reject) => {
+      const request = http.request(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(body.length),
+        },
+      }, (response) => {
+        response.once("data", () => {
+          response.destroy();
+          request.destroy();
+        });
+        response.once("error", () => {});
+        response.once("close", resolve);
+      });
+      request.once("error", (error) => {
+        if (error.code !== "ECONNRESET") reject(error);
+      });
+      request.end(body);
+    });
+
+    const closeState = await Promise.race([
+      upstreamClosed,
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("Upstream connection stayed open")), 1_000);
+      }),
+    ]);
+    expect(closeState).toEqual({ destroyed: true, writableEnded: false });
+    await vi.waitFor(() => {
+      expect(onRequestEnded).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: "aborted" }),
+        { channelFailure: false },
+      );
+    });
+  });
+
   it("客户端上传中断不会留下未处理流错误", async () => {
     const upstream = await listen((request, response) => {
       request.on("error", () => {});
@@ -1976,10 +2614,299 @@ describe("GatewayService", () => {
 
     const state = service.getPublicState();
     expect(state).toMatchObject({ status: "running", port: restoredPort });
-    expect(state.routes).toEqual([{ target: "claude", profileId: PROFILE_A }]);
+    // v1 老库拆分继承：claude 的路由同时恢复给 claude-desktop
+    expect(state.routes).toEqual([
+      { target: "claude", profileId: PROFILE_A },
+      { target: "claude-desktop", profileId: PROFILE_A },
+    ]);
     expect(JSON.stringify(state)).not.toContain("stable-local-token");
     const prepared = await service.prepareConnection(profile, "upstream", "claude");
     expect(prepared.apiKey).toBe("stable-local-token");
     expect(prepared.profile.baseUrl).toBe(`http://127.0.0.1:${restoredPort}/claude`);
+  });
+});
+
+describe("模型映射", () => {
+  function mappedAnthropicProfile(upstreamUrl, modelRoutes, extra = {}) {
+    return {
+      id: PROFILE_A,
+      protocol: "anthropic",
+      authMode: "bearer",
+      baseUrl: upstreamUrl,
+      targets: ["claude"],
+      modelRoutes,
+      ...extra,
+    };
+  }
+
+  async function postJson(url, token, payload, headers = {}) {
+    const body = Buffer.isBuffer(payload) ? payload : Buffer.from(JSON.stringify(payload), "utf8");
+    return rawRequest(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(body.length),
+        ...(token ? { "x-api-key": token } : {}),
+        ...headers,
+      },
+      body,
+    });
+  }
+
+  it("分配模式把命中映射的模型改写为上游模型，监控同时保留请求与上游模型", async () => {
+    let received;
+    const upstream = await listen((request, response) => {
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on("end", () => {
+        received = { body: Buffer.concat(chunks), headers: request.headers };
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ model: "k3" }));
+      });
+    });
+    const profile = mappedAnthropicProfile(upstream.baseUrl, {
+      "claude-sonnet-5": { model: "k3", labelOverride: "k3", supports1m: true },
+    });
+    const monitor = new RequestMonitorService();
+    const { service } = await createGateway({
+      [PROFILE_A]: { profile, apiKey: "upstream-secret" },
+    }, { requestMonitor: monitor, targets: ["claude"] });
+    await service.activateRoutes(profile, ["claude"]);
+    const token = await localCredential(service, profile, "claude");
+
+    const response = await postJson(
+      `${service.getPublicState().localBaseUrls.claude}/v1/messages`,
+      token,
+      { model: "claude-sonnet-5", max_tokens: 64, messages: [{ role: "user", content: "hi" }] },
+    );
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(received.body.toString("utf8"))).toMatchObject({
+      model: "k3",
+      max_tokens: 64,
+    });
+    expect(Number(received.headers["content-length"])).toBe(received.body.length);
+    const [entry] = monitor.list();
+    expect(entry.model).toBe("claude-sonnet-5");
+    expect(entry.upstreamModel).toBe("k3");
+  });
+
+  it("claude-desktop 目标同样按映射改写", async () => {
+    let received;
+    const upstream = await listen((request, response) => {
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on("end", () => {
+        received = Buffer.concat(chunks);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end("{}");
+      });
+    });
+    const profile = {
+      ...mappedAnthropicProfile(upstream.baseUrl, {
+        "claude-opus-4-8": { model: "k3" },
+      }),
+      targets: ["claude-desktop"],
+    };
+    const { service } = await createGateway({
+      [PROFILE_A]: { profile, apiKey: "upstream-secret" },
+    }, { targets: ["claude-desktop"] });
+    await service.activateRoutes(profile, ["claude-desktop"]);
+    const token = await localCredential(service, profile, "claude-desktop");
+
+    const response = await postJson(
+      `${service.getPublicState().localBaseUrls["claude-desktop"]}/v1/messages`,
+      token,
+      { model: "claude-opus-4-8", max_tokens: 16, messages: [] },
+    );
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(received.toString("utf8")).model).toBe("k3");
+  });
+
+  it("OpenAI Responses 请求体也按映射改写", async () => {
+    let received;
+    const upstream = await listen((request, response) => {
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on("end", () => {
+        received = Buffer.concat(chunks);
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end([
+          "event: response.completed\n",
+          'data: {"type":"response.completed","response":{"id":"r1","output":[],"usage":{"input_tokens":1,"output_tokens":1}}}\n\n',
+          "data: [DONE]\n\n",
+        ].join(""));
+      });
+    });
+    const profile = {
+      id: PROFILE_A,
+      protocol: "openai-responses",
+      authMode: "bearer",
+      baseUrl: `${upstream.baseUrl}/v1`,
+      targets: ["codex"],
+      modelRoutes: { "gpt-5.6-sol": { model: "k3-coding" } },
+    };
+    const { service } = await createGateway({
+      [PROFILE_A]: { profile, apiKey: "upstream-secret" },
+    });
+    await service.activateRoutes(profile);
+    const token = await localCredential(service, profile);
+
+    const response = await postJson(
+      `${service.getPublicState().localBaseUrls.codex}/responses`,
+      token,
+      { model: "gpt-5.6-sol", stream: true, input: "hello" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(received.toString("utf8")).model).toBe("k3-coding");
+  });
+
+  it("未命中映射的模型原样透传，不做重序列化", async () => {
+    let received;
+    const upstream = await listen((request, response) => {
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on("end", () => {
+        received = Buffer.concat(chunks);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end("{}");
+      });
+    });
+    const profile = mappedAnthropicProfile(upstream.baseUrl, {
+      "claude-sonnet-5": { model: "k3" },
+    });
+    const { service } = await createGateway({
+      [PROFILE_A]: { profile, apiKey: "upstream-secret" },
+    }, { targets: ["claude"] });
+    await service.activateRoutes(profile, ["claude"]);
+    const token = await localCredential(service, profile, "claude");
+    const payload = Buffer.from('{ "model": "claude-opus-4-8",  "messages": [ ] }', "utf8");
+
+    const response = await postJson(
+      `${service.getPublicState().localBaseUrls.claude}/v1/messages`,
+      token,
+      payload,
+    );
+
+    expect(response.status).toBe(200);
+    expect(received).toEqual(payload);
+  });
+
+  it("压缩请求体跳过改写，原样转发", async () => {
+    let received;
+    const upstream = await listen((request, response) => {
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on("end", () => {
+        received = { body: Buffer.concat(chunks), headers: request.headers };
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end("{}");
+      });
+    });
+    const profile = mappedAnthropicProfile(upstream.baseUrl, {
+      "claude-sonnet-5": { model: "k3" },
+    });
+    const { service } = await createGateway({
+      [PROFILE_A]: { profile, apiKey: "upstream-secret" },
+    }, { targets: ["claude"] });
+    await service.activateRoutes(profile, ["claude"]);
+    const token = await localCredential(service, profile, "claude");
+    const { gzipSync } = require("node:zlib");
+    const compressed = gzipSync(Buffer.from(JSON.stringify({
+      model: "claude-sonnet-5",
+      messages: [],
+    }), "utf8"));
+
+    const response = await postJson(
+      `${service.getPublicState().localBaseUrls.claude}/v1/messages`,
+      token,
+      compressed,
+      { "content-encoding": "gzip", "content-length": String(compressed.length) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(received.body).toEqual(compressed);
+  });
+
+  it("带日期后缀的 Claude 模型变体归并到主档位映射", async () => {
+    let received;
+    const upstream = await listen((request, response) => {
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on("end", () => {
+        received = Buffer.concat(chunks);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end("{}");
+      });
+    });
+    const profile = mappedAnthropicProfile(upstream.baseUrl, {
+      "claude-haiku-4-5": { model: "k3" },
+    });
+    const monitor = new RequestMonitorService();
+    const { service } = await createGateway({
+      [PROFILE_A]: { profile, apiKey: "upstream-secret" },
+    }, { requestMonitor: monitor, targets: ["claude"] });
+    await service.activateRoutes(profile, ["claude"]);
+    const token = await localCredential(service, profile, "claude");
+
+    const response = await postJson(
+      `${service.getPublicState().localBaseUrls.claude}/v1/messages`,
+      token,
+      { model: "claude-haiku-4-5-20251001", max_tokens: 16, messages: [] },
+    );
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(received.toString("utf8")).model).toBe("k3");
+    const [entry] = monitor.list();
+    expect(entry.model).toBe("claude-haiku-4-5-20251001");
+    expect(entry.upstreamModel).toBe("k3");
+  });
+
+  it("权重模式按映射后的模型匹配候选，并把请求模型记在粘性键上", async () => {
+    const upstream = await listen((request, response) => {
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on("end", () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ echoed: body.model }));
+      });
+    });
+    const mapped = {
+      ...weightedProfile(PROFILE_A, upstream.baseUrl, { models: ["k3"], weight: 10 }),
+      modelRoutes: { "gpt-x": { model: "k3" } },
+    };
+    const unmapped = weightedProfile(PROFILE_B, "http://127.0.0.1:1", {
+      models: ["model-a"],
+      weight: 100,
+    });
+    const { service } = await createWeightedGateway([mapped, unmapped]);
+    const url = `${service.getPublicState().localBaseUrls.codex}/chat/completions`;
+
+    const response = await postJson(url, undefined, {
+      model: "gpt-x",
+      messages: [],
+    });
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body.toString("utf8")).echoed).toBe("k3");
+  });
+
+  it("权重模式下没有映射且端点不含该模型时返回 503", async () => {
+    const unmapped = weightedProfile(PROFILE_B, "http://127.0.0.1:1", {
+      models: ["model-a"],
+      weight: 100,
+    });
+    const { service } = await createWeightedGateway([unmapped]);
+    const url = `${service.getPublicState().localBaseUrls.codex}/chat/completions`;
+
+    const response = await postJson(url, undefined, {
+      model: "gpt-x",
+      messages: [],
+    });
+
+    expect(response.status).toBe(503);
   });
 });

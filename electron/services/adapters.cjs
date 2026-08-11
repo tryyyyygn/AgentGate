@@ -212,7 +212,18 @@ function claudeDesktopConfiguration(profile, apiKey, baseline) {
     [CLAUDE_DESKTOP.OIDC]: undefined,
     [CLAUDE_DESKTOP.DISABLE_MODE_CHOOSER]: true,
   }
-  if (profile.model) {
+  // 配了模型映射时，桌面端保留客户端原生档位名（功能分档不丢），
+  // 显示名取标签或上游模型；改写由网关在转发时完成。
+  const routeEntries = Object.entries(profile.modelRoutes || {})
+    .filter(([name, route]) => name.trim() && typeof route?.model === 'string' && route.model.trim())
+  if (routeEntries.length > 0) {
+    configuration[CLAUDE_DESKTOP.MODEL_DISCOVERY] = true
+    configuration[CLAUDE_DESKTOP.MODELS] = routeEntries.map(([name, route]) => ({
+      name,
+      labelOverride: route.labelOverride?.trim() || route.model.trim(),
+      supports1m: Boolean(route.supports1m),
+    }))
+  } else if (profile.model) {
     configuration[CLAUDE_DESKTOP.MODEL_DISCOVERY] = true
     configuration[CLAUDE_DESKTOP.MODELS] = [profile.model]
   } else if (hasClaudeDesktopBaseline(baseline)) {
@@ -302,28 +313,28 @@ function hasClaudeVsCodeBaseline(state) {
   return state && Object.prototype.hasOwnProperty.call(state, 'vscodeEnvironmentVariables')
 }
 
-function claudeDesktopProfileFromId(claudePaths, profileId) {
-  if (!claudePaths.desktopLibrary || !CONFIG_LIBRARY_ID.test(profileId || '')) return undefined
+function claudeDesktopProfileFromId(desktopPaths, profileId) {
+  if (!desktopPaths?.library || !CONFIG_LIBRARY_ID.test(profileId || '')) return undefined
   return {
     id: profileId,
-    path: path.join(claudePaths.desktopLibrary, `${profileId}.json`),
-    metaPath: path.join(claudePaths.desktopLibrary, '_meta.json'),
+    path: path.join(desktopPaths.library, `${profileId}.json`),
+    metaPath: path.join(desktopPaths.library, '_meta.json'),
   }
 }
 
-function activeClaudeDesktopProfile(claudePaths, sources, strict = true) {
-  if (!claudePaths.desktopLibrary) {
-    return claudePaths.desktopConfig
-      ? { id: null, path: claudePaths.desktopConfig, metaPath: null }
+function activeClaudeDesktopProfile(desktopPaths, sources, strict = true) {
+  if (!desktopPaths?.library) {
+    return desktopPaths?.config
+      ? { id: null, path: desktopPaths.config, metaPath: null }
       : undefined
   }
-  const metaPath = path.join(claudePaths.desktopLibrary, '_meta.json')
+  const metaPath = path.join(desktopPaths.library, '_meta.json')
   try {
     const source = sources?.has(metaPath)
       ? sourceText(sources, metaPath, '{}')
       : fs.readFileSync(metaPath, 'utf8')
     const meta = parseJsoncValue(source, 'Claude Desktop config library')
-    const profile = claudeDesktopProfileFromId(claudePaths, meta?.appliedId)
+    const profile = claudeDesktopProfileFromId(desktopPaths, meta?.appliedId)
     if (!profile) throw new Error('Claude Desktop config library has an invalid appliedId')
     return profile
   } catch (error) {
@@ -332,12 +343,12 @@ function activeClaudeDesktopProfile(claudePaths, sources, strict = true) {
   }
 }
 
-function managedClaudeDesktopProfile(claudePaths, baseline, sources) {
+function managedClaudeDesktopProfile(desktopPaths, baseline, sources) {
   if (hasClaudeDesktopBaseline(baseline)
     && typeof baseline.desktopProfileId === 'string') {
-    return claudeDesktopProfileFromId(claudePaths, baseline.desktopProfileId)
+    return claudeDesktopProfileFromId(desktopPaths, baseline.desktopProfileId)
   }
-  return activeClaudeDesktopProfile(claudePaths, sources, false)
+  return activeClaudeDesktopProfile(desktopPaths, sources, false)
 }
 
 async function claudeDesktopData(profile, sources) {
@@ -393,7 +404,15 @@ function normalizedDesktopModel(value) {
     return { name: extended ? extended[1].trim() : value, supports1m: Boolean(extended) }
   }
   if (!value || typeof value !== 'object' || typeof value.name !== 'string') return value
-  return { name: value.name, supports1m: Boolean(value.supports1m) }
+  return {
+    name: value.name,
+    supports1m: Boolean(value.supports1m),
+    // labelOverride 参与一致性比较：映射表生成的条目带显示名，比较时丢掉它
+    // 会把用户/其他工具改过的标签误判成「一致」，造成漂移漏报或反复重写。
+    ...(typeof value.labelOverride === 'string' && value.labelOverride.trim()
+      ? { labelOverride: value.labelOverride.trim() }
+      : {}),
+  }
 }
 
 function claudeDesktopValueMatches(name, current, expected) {
@@ -445,6 +464,7 @@ function claudeVsCodeMatches(data, profile, apiKey, modelState) {
  * @returns {object} 以客户端 ID 为键的适配器注册表。
  */
 function createAdapters(paths) {
+  const desktopPaths = paths['claude-desktop'] || {}
   const adapters = {
     [TARGET.CLAUDE]: {
       id: TARGET.CLAUDE,
@@ -452,23 +472,10 @@ function createAdapters(paths) {
       command: 'claude',
       primaryPath: paths.claude.config,
       get paths() {
-        const desktopProfile = activeClaudeDesktopProfile(paths.claude, undefined, false)
         return [...new Set([
           paths.claude.config,
           paths.claude.vscodeConfig,
-          desktopProfile?.metaPath,
-          desktopProfile?.path,
         ].filter(Boolean))]
-      },
-      pathsForBaseline(baseline) {
-        const filePaths = this.paths
-        if (!hasClaudeDesktopBaseline(baseline)
-          || typeof baseline.desktopProfileId !== 'string') return filePaths
-        const desktopProfile = claudeDesktopProfileFromId(
-          paths.claude,
-          baseline.desktopProfileId,
-        )
-        return [...new Set([...filePaths, desktopProfile?.path].filter(Boolean))]
       },
       async build(profile, apiKey, options = {}) {
         assertProtocol(profile, [PROTOCOL.ANTHROPIC], 'Claude Code')
@@ -505,30 +512,9 @@ function createAdapters(paths) {
             ], 'VS Code user settings')
           }, options.sources))
         }
-        const manageDesktop = !options.baseline || hasClaudeDesktopBaseline(options.baseline)
-        if (manageDesktop) {
-          const desktopProfile = managedClaudeDesktopProfile(
-            paths.claude,
-            options.baseline,
-          )
-          if (desktopProfile?.path) {
-            drafts.push(await restoreDraft(TARGET.CLAUDE, desktopProfile.path, (source) => (
-              patchJsonc(source, Object.entries(claudeDesktopConfiguration(
-                profile,
-                apiKey,
-                options.baseline,
-              ))
-                .map(([name, value]) => ({ path: [name], value })), 'Claude Desktop profile')
-            ), options.sources))
-          }
-        }
         return drafts
       },
-      validate(source, filePath) {
-        const desktopMetaPath = paths.claude.desktopLibrary
-          ? path.join(paths.claude.desktopLibrary, '_meta.json')
-          : undefined
-        if (desktopMetaPath && filePath === desktopMetaPath) return
+      validate(source) {
         if (source.trim()) assertValidJsonc(source, 'Claude settings.json')
       },
       inspect(sources) {
@@ -536,21 +522,9 @@ function createAdapters(paths) {
           sourceText(sources, paths.claude.config, '{}'),
           'Claude settings.json',
         )
-        const native = {
+        return {
           baseUrl: data?.env?.[CLAUDE_ENV.BASE_URL],
           model: data?.env?.[CLAUDE_ENV.MODEL],
-        }
-        if (native.baseUrl !== undefined) return native
-        const desktopProfile = activeClaudeDesktopProfile(paths.claude, sources, false)
-        if (!desktopProfile?.path || !sources.has(desktopProfile.path)) return native
-        const desktop = parseJsoncValue(
-          sourceText(sources, desktopProfile.path, '{}'),
-          'Claude Desktop profile',
-        )
-        const inspection = claudeDesktopInspection(desktop)
-        return {
-          ...inspection,
-          model: inspection.model ?? native.model,
         }
       },
       async captureManagedState(suppliedSources) {
@@ -573,11 +547,6 @@ function createAdapters(paths) {
             'VS Code user settings',
           )
           Object.assign(state, captureClaudeVsCodeState(vscode))
-        }
-        const desktopProfile = activeClaudeDesktopProfile(paths.claude, sources, false)
-        if (desktopProfile?.path) {
-          const desktop = await claudeDesktopData(desktopProfile, sources)
-          Object.assign(state, captureClaudeDesktopState(desktop, desktopProfile.id))
         }
         return state
       },
@@ -626,35 +595,16 @@ function createAdapters(paths) {
             suppliedSources,
           ))
         }
-        if (hasClaudeDesktopBaseline(state)) {
-          const desktopProfile = managedClaudeDesktopProfile(paths.claude, state, suppliedSources)
-          if (desktopProfile?.path) {
-            drafts.push(await restoreDraft(
-              TARGET.CLAUDE,
-              desktopProfile.path,
-              (source) => patchJsonc(source, Object.entries(CLAUDE_DESKTOP_STATE_KEYS)
-                .map(([name, stateKey]) => ({
-                  path: [name],
-                  value: restoredValue(state[stateKey]),
-                })), 'Claude Desktop profile'),
-              suppliedSources,
-            ))
-          }
-        }
         return drafts
       },
       async gatewayOwnership(profile, apiKey, suppliedSources, options = {}) {
-        const sourcePaths = options.baseline
-          ? this.pathsForBaseline(options.baseline)
-          : this.paths
-        const sources = await adapterSources(sourcePaths, suppliedSources)
+        const sources = await adapterSources(this.paths, suppliedSources)
         const data = parseJsoncValue(
           sourceText(sources, paths.claude.config, '{}'),
           'Claude settings.json',
         )
         const env = data?.env || {}
-        const nativeSelected = env[CLAUDE_ENV.BASE_URL] === profile.baseUrl
-        let selected = nativeSelected
+        let selected = env[CLAUDE_ENV.BASE_URL] === profile.baseUrl
         const nativeMatches = Object.entries(claudeEnvironment(
           profile,
           apiKey,
@@ -678,31 +628,114 @@ function createAdapters(paths) {
             options.baseline?.vscodeModel,
           )
         }
-        let desktopMatches = true
-        const manageDesktop = !options.baseline || hasClaudeDesktopBaseline(options.baseline)
-        if (manageDesktop) {
-          const desktopProfile = managedClaudeDesktopProfile(
-            paths.claude,
-            options.baseline,
-            sources,
-          )
-          const desktop = await claudeDesktopData(desktopProfile, sources)
-          selected = selected || desktop?.[CLAUDE_DESKTOP.BASE_URL] === profile.baseUrl
-          desktopMatches = !desktopProfile?.path
-            || claudeDesktopMatches(desktop, profile, apiKey, options.baseline, options)
+        return ownership(selected, nativeMatches && vscodeMatches)
+      },
+    },
 
-          const activeProfile = activeClaudeDesktopProfile(paths.claude, sources, false)
-          if (activeProfile?.path && !sameClaudeDesktopProfile(activeProfile, desktopProfile)) {
-            const activeDesktop = await claudeDesktopData(activeProfile, sources)
-            if (activeDesktop?.[CLAUDE_DESKTOP.BASE_URL] === profile.baseUrl) {
-              return GATEWAY_OWNERSHIP.CONFLICT
-            }
+    [TARGET.CLAUDE_DESKTOP]: {
+      id: TARGET.CLAUDE_DESKTOP,
+      name: 'Claude Desktop',
+      primaryPath: desktopPaths.config
+        || desktopPaths.library
+        || paths.claude.config,
+      get paths() {
+        const desktopProfile = activeClaudeDesktopProfile(desktopPaths, undefined, false)
+        return [...new Set([
+          desktopProfile?.metaPath,
+          desktopProfile?.path,
+        ].filter(Boolean))]
+      },
+      pathsForBaseline(baseline) {
+        const filePaths = this.paths
+        if (!hasClaudeDesktopBaseline(baseline)
+          || typeof baseline.desktopProfileId !== 'string') return filePaths
+        const desktopProfile = claudeDesktopProfileFromId(
+          desktopPaths,
+          baseline.desktopProfileId,
+        )
+        return [...new Set([...filePaths, desktopProfile?.path].filter(Boolean))]
+      },
+      async build(profile, apiKey, options = {}) {
+        assertProtocol(profile, [PROTOCOL.ANTHROPIC], 'Claude Desktop')
+        const manageDesktop = !options.baseline || hasClaudeDesktopBaseline(options.baseline)
+        if (!manageDesktop) return []
+        const desktopProfile = managedClaudeDesktopProfile(
+          desktopPaths,
+          options.baseline,
+        )
+        if (!desktopProfile?.path) return []
+        return [await restoreDraft(TARGET.CLAUDE_DESKTOP, desktopProfile.path, (source) => (
+          patchJsonc(source, Object.entries(claudeDesktopConfiguration(
+            profile,
+            apiKey,
+            options.baseline,
+          ))
+            .map(([name, value]) => ({ path: [name], value })), 'Claude Desktop profile')
+        ), options.sources)]
+      },
+      validate(source, filePath) {
+        const desktopMetaPath = desktopPaths.library
+          ? path.join(desktopPaths.library, '_meta.json')
+          : undefined
+        if (desktopMetaPath && filePath === desktopMetaPath) return
+        if (source.trim()) assertValidJsonc(source, 'Claude Desktop profile')
+      },
+      inspect(sources) {
+        const desktopProfile = activeClaudeDesktopProfile(desktopPaths, sources, false)
+        if (!desktopProfile?.path || !sources.has(desktopProfile.path)) return {}
+        const desktop = parseJsoncValue(
+          sourceText(sources, desktopProfile.path, '{}'),
+          'Claude Desktop profile',
+        )
+        return claudeDesktopInspection(desktop)
+      },
+      async captureManagedState(suppliedSources) {
+        const sources = await adapterSources(this.paths, suppliedSources)
+        const desktopProfile = activeClaudeDesktopProfile(desktopPaths, sources, false)
+        if (!desktopProfile?.path) return {}
+        const desktop = await claudeDesktopData(desktopProfile, sources)
+        return captureClaudeDesktopState(desktop, desktopProfile.id)
+      },
+      async buildRestore(state, suppliedSources) {
+        if (!hasClaudeDesktopBaseline(state)) return []
+        const desktopProfile = managedClaudeDesktopProfile(desktopPaths, state, suppliedSources)
+        if (!desktopProfile?.path) return []
+        return [await restoreDraft(
+          TARGET.CLAUDE_DESKTOP,
+          desktopProfile.path,
+          (source) => patchJsonc(source, Object.entries(CLAUDE_DESKTOP_STATE_KEYS)
+            .map(([name, stateKey]) => ({
+              path: [name],
+              value: restoredValue(state[stateKey]),
+            })), 'Claude Desktop profile'),
+          suppliedSources,
+        )]
+      },
+      async gatewayOwnership(profile, apiKey, suppliedSources, options = {}) {
+        const sourcePaths = options.baseline
+          ? this.pathsForBaseline(options.baseline)
+          : this.paths
+        const sources = await adapterSources(sourcePaths, suppliedSources)
+        const manageDesktop = !options.baseline || hasClaudeDesktopBaseline(options.baseline)
+        if (!manageDesktop) return ownership(false, true)
+        const desktopProfile = managedClaudeDesktopProfile(
+          desktopPaths,
+          options.baseline,
+          sources,
+        )
+        const desktop = await claudeDesktopData(desktopProfile, sources)
+        const selected = desktop?.[CLAUDE_DESKTOP.BASE_URL] === profile.baseUrl
+        const desktopMatches = !desktopProfile?.path
+          || claudeDesktopMatches(desktop, profile, apiKey, options.baseline, options)
+
+        const activeProfile = activeClaudeDesktopProfile(desktopPaths, sources, false)
+        if (activeProfile?.path && !sameClaudeDesktopProfile(activeProfile, desktopProfile)) {
+          const activeDesktop = await claudeDesktopData(activeProfile, sources)
+          if (activeDesktop?.[CLAUDE_DESKTOP.BASE_URL] === profile.baseUrl) {
+            return GATEWAY_OWNERSHIP.CONFLICT
           }
         }
-        return ownership(selected,
-          nativeMatches
-          && vscodeMatches
-          && desktopMatches)
+        return ownership(selected, desktopMatches)
       },
     },
 
@@ -1050,6 +1083,7 @@ function createAdapters(paths) {
 }
 
 module.exports = {
+  CLAUDE_DESKTOP_STATE_KEYS,
   GATEWAY_OWNERSHIP,
   createAdapters,
 }
