@@ -100,5 +100,10 @@
     "asarUnpack": [
       "**/node_modules/better-sqlite3/**"
     ]
+  },
+  "pnpm": {
+    "overrides": {
+      "js-yaml": "4.3.1"
+    }
   }
 }
