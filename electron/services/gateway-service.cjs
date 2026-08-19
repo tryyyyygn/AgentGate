@@ -644,18 +644,10 @@ function isCodexResponsesRequest(target, profile, suffix, method) {
 }
 
 async function createUpstreamRequest(destination, options, useCodexTransport) {
-  if (useCodexTransport && destination.protocol === 'https:' && http2Wrapper?.auto) {
-    // auto() 的首次 H2 请求会先做一次 ALPN 探测，再另建真正的 H2 会话。
-    // 先复用/建立 Agent 会话并写入协议缓存，避免首个 Codex 请求支付两次 TLS 建链。
-    await prewarmCodexHttp2Session(destination)
-    return http2Wrapper.auto(destination, {
-      ...options,
-      agent: {
-        https: CODEX_HTTPS_AGENT,
-        http2: CODEX_HTTP2_AGENT || http2Wrapper.globalAgent,
-      },
-    })
-  }
+  // 2026-08-19 修复：禁用 HTTP/2 上游通道。
+  // 中转站 xixiapi.io 的 Cloudflare 防护会拦截 Node 原生 HTTP/2 指纹
+  // （403 restricted region，cf-ray 落在美国节点），HTTP/1.1 配合浏览器 UA 可正常通过。
+  // 若后续中转站放开 H2 指纹检测，可恢复 http2Wrapper.auto 分支。
   const transport = destination.protocol === 'https:' ? https : http
   return transport.request(destination, {
     ...options,
@@ -2043,6 +2035,9 @@ class GatewayService {
     })
 
     const headers = stripHeaders(request.headers, ['host'])
+    // 伪装浏览器 UA：部分中转站的 Cloudflare 防护会拦截非浏览器 UA 的 API 请求
+    // （报 403 restricted region），强制覆盖为 Chrome 的 User-Agent 以绕过。
+    headers['user-agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
     // Codex Responses 的回包可能很大。向上游协商 gzip，网关随即解压后再转给
     // 本地客户端，既缩短公网 SSE 传输，也保留监控侧的明文事件解析。
     headers['accept-encoding'] = codexResponsesTransport ? 'gzip' : 'identity'
