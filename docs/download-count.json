@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "label": "downloads",
-  "message": "91",
+  "message": "92",
   "color": "2F78D0",
   "cacheSeconds": 3600,
-  "setup": 63,
+  "setup": 64,
   "portable": 28
 }
