@@ -1778,7 +1778,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 .wallet-table-head,
 .wallet-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) 72px 174px 86px 98px 112px 132px;
+  grid-template-columns: minmax(130px, 1fr) 64px 130px minmax(160px, 1.1fr) 86px 100px 132px;
   align-items: center;
   gap: 10px;
   padding: 0 10px;
@@ -1814,6 +1814,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 
 .wallet-identity,
 .wallet-balance,
+.wallet-subscription-cell,
 .wallet-state { min-width: 0; }
 .wallet-identity strong {
   display: block;
@@ -1824,30 +1825,7 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.wallet-identity > span {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  margin-top: 2px;
-}
-.wallet-identity code {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink-quiet);
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.wallet-identity small {
-  flex: 0 0 auto;
-  color: var(--ink-soft);
-  font-family: var(--mono);
-  font-size: var(--fs-label);
-}
 .wallet-template,
-.wallet-threshold,
 .wallet-checked {
   overflow: hidden;
   color: var(--ink-soft);
@@ -1868,7 +1846,8 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.wallet-balance small {
+.wallet-balance small,
+.wallet-subscription small {
   display: block;
   margin-top: 1px;
   overflow: hidden;
@@ -1878,7 +1857,12 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.wallet-subscription { min-width: 0; margin-top: 1px; }
+.wallet-empty-value {
+  color: var(--ink-quiet);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+.wallet-subscription { min-width: 0; }
 .wallet-subscription-head {
   display: flex;
   align-items: center;
@@ -1903,6 +1887,22 @@ code, .num, [data-num] { font-variant-numeric: tabular-nums; }
 }
 .wallet-subscription-head em svg { flex: 0 0 auto; }
 .wallet-subscription-head em span { white-space: nowrap; }
+.wallet-subscription-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 2px;
+  color: var(--ink-quiet);
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+}
+.wallet-subscription-meta > span { white-space: nowrap; }
+.wallet-subscription-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
 .wallet-subscription-meter {
   display: block;
   width: 100%;

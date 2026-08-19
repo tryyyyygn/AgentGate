@@ -24,7 +24,7 @@ describe("发布清单", () => {
     const packageJson = JSON.parse(await fs.readFile("package.json", "utf8"));
     const releaseSource = await fs.readFile("scripts/release.mjs", "utf8");
 
-    expect(packageJson.version).toBe("1.9.0");
+    expect(packageJson.version).toBe("1.9.2");
     expect(packageJson.build.publish).toEqual([
       { provider: "github", owner: "tryyyyyygn", repo: "AgentGate" },
     ]);

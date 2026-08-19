@@ -646,7 +646,7 @@ export function WalletView({ active = true, onToast, onProfilesChanged }: Wallet
               <span role="columnheader">{m.wallet.name}</span>
               <span role="columnheader">{m.wallet.template}</span>
               <span role="columnheader">{m.wallet.balance}</span>
-              <span role="columnheader">{m.wallet.threshold}</span>
+              <span role="columnheader">{m.wallet.subscription}</span>
               <span role="columnheader">{m.status.state}</span>
               <span role="columnheader">{m.status.lastCheck}</span>
               <span role="columnheader">{m.wallet.actions}</span>
@@ -711,36 +711,38 @@ export function WalletView({ active = true, onToast, onProfilesChanged }: Wallet
                 >
                   <div className="wallet-identity" role="cell">
                     <strong>{wallet.name}</strong>
-                    <span>
-                      <code title={wallet.siteUrl}>{wallet.siteUrl}</code>
-                      <small>{wallet.credentialHint ?? (wallet.credentialStatus === "expired" ? m.wallet.loginExpired : m.wallet.notSignedIn)}</small>
-                    </span>
                   </div>
                   <code className="wallet-template" role="cell">{TEMPLATE_LABELS[wallet.template]}</code>
                   <div className="wallet-balance" role="cell">
                     <strong>
                       {status === "unlimited" ? <InfinityIcon size={18} /> : formatUsd(wallet.balance?.remainingUsd, locale)}
                     </strong>
-                    {subscription && dailyUsage ? (
+                    {balanceMeta ? <small title={balanceMeta}>{balanceMeta}</small> : null}
+                  </div>
+                  <div className="wallet-subscription-cell" role="cell">
+                    {subscription ? (
                       <div className="wallet-subscription" title={subscriptionTitle}>
                         <div className="wallet-subscription-head">
                           <span>{subscription.name}</span>
-                          {(resetTime || daysRemaining !== undefined || subscriptions.length > 1) && (
-                            <em aria-label={resetLabel}>
-                              {resetTime ? (
-                                <>
-                                  <Clock3 size={9} aria-hidden="true" />
-                                  <span>{resetTime}</span>
-                                </>
-                              ) : daysRemaining !== undefined
-                                ? fill(m.wallet.daysRemaining, { days: daysRemaining })
-                                : null}
-                              {subscriptions.length > 1 && fill(m.wallet.moreSubscriptions, { count: subscriptions.length - 1 })}
-                            </em>
+                          {subscriptions.length > 1 && (
+                            <em>{fill(m.wallet.moreSubscriptions, { count: subscriptions.length - 1 })}</em>
                           )}
                         </div>
-                        <small>{dailyUsage}</small>
-                        {subscriptionProgress !== undefined && (
+                        {(daysRemaining !== undefined || resetTime) && (
+                          <div className="wallet-subscription-meta">
+                            {daysRemaining !== undefined && (
+                              <span>{fill(m.wallet.daysRemaining, { days: daysRemaining })}</span>
+                            )}
+                            {resetTime && (
+                              <span className="wallet-subscription-reset" aria-label={resetLabel}>
+                                <Clock3 size={9} aria-hidden="true" />
+                                <span>{resetTime}</span>
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {dailyUsage && <small>{dailyUsage}</small>}
+                        {subscriptionProgress !== undefined && dailyUsage && (
                           <span
                             className="wallet-subscription-meter"
                             role="progressbar"
@@ -753,9 +755,10 @@ export function WalletView({ active = true, onToast, onProfilesChanged }: Wallet
                           </span>
                         )}
                       </div>
-                    ) : balanceMeta ? <small title={balanceMeta}>{balanceMeta}</small> : null}
+                    ) : (
+                      <span className="wallet-empty-value">——</span>
+                    )}
                   </div>
-                  <code className="wallet-threshold" role="cell">{formatUsd(wallet.lowBalanceUsd, locale)}</code>
                   <div className="wallet-state" role="cell" title={wallet.balance?.message}>
                     {logging
                       ? <LoaderCircle size={12} className="spin" />

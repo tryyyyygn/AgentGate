@@ -138,6 +138,60 @@ describe("钱包网页登录窗口", () => {
     expect(loginSession.clearAuthCache).toHaveBeenCalledOnce();
   });
 
+  it("Electron 销毁登录窗口后，手动关闭仍安全取消", async () => {
+    let rejectImport;
+    const importPending = new Promise((_, reject) => {
+      rejectImport = reject;
+    });
+    const walletService = {
+      getLoginTarget: vi.fn(async () => ({
+        id: "wallet-id",
+        siteUrl: "https://relay.example",
+        loginUrl: "https://relay.example/login",
+      })),
+      importSub2ApiSession: vi.fn(() => importPending),
+    };
+    const service = new WalletLoginService({
+      BrowserWindow: FakeBrowserWindow,
+      walletService,
+      getParentWindow: () => undefined,
+      openExternal: vi.fn(async () => {}),
+    });
+
+    const pending = service.login("wallet-id");
+    await vi.waitFor(() => expect(FakeBrowserWindow.last).toBeDefined());
+    const window = FakeBrowserWindow.last;
+    const webContents = window.webContents;
+    const loginSession = webContents.session;
+    webContents.url = "https://relay.example/dashboard";
+    webContents.executeJavaScript.mockResolvedValue({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+    });
+    webContents.emit("did-finish-load");
+    await vi.waitFor(() => expect(walletService.importSub2ApiSession).toHaveBeenCalledOnce());
+
+    Object.defineProperty(window, "webContents", {
+      configurable: true,
+      get() {
+        if (window.destroyed) throw new Error("Object has been destroyed");
+        return webContents;
+      },
+    });
+    for (const method of ["clearStorageData", "clearCache", "clearAuthCache"]) {
+      loginSession[method].mockImplementation(() => {
+        throw new Error("Object has been destroyed");
+      });
+    }
+
+    expect(() => window.close()).not.toThrow();
+    rejectImport(new Error("late verification failure"));
+    await expect(pending).resolves.toEqual({ cancelled: true });
+    expect(loginSession.clearStorageData).toHaveBeenCalledOnce();
+    expect(loginSession.clearCache).toHaveBeenCalledOnce();
+    expect(loginSession.clearAuthCache).toHaveBeenCalledOnce();
+  });
+
   it("账户验证暂时失败时保留登录窗口并限频重试", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-28T00:00:00.000Z"));

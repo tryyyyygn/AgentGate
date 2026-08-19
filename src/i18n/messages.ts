@@ -212,6 +212,7 @@ export interface Messages {
     importSuccess: string;
     template: string;
     balance: string;
+    subscription: string;
     threshold: string;
     thresholdInvalid: string;
     actions: string;
@@ -667,6 +668,7 @@ const zh: Messages = {
     importSuccess: "已导入至「{group}」：新增 {imported}，已有 {reused}，跳过 {skipped}",
     template: "模板",
     balance: "余额",
+    subscription: "订阅",
     threshold: "低额阈值",
     thresholdInvalid: "低额阈值必须是大于或等于 0 的数字",
     actions: "操作",
@@ -1123,6 +1125,7 @@ const zhTW: Messages = {
     importSuccess: "已匯入至「{group}」：新增 {imported}、已有 {reused}、略過 {skipped}",
     template: "模板",
     balance: "餘額",
+    subscription: "訂閱",
     threshold: "低額門檻",
     thresholdInvalid: "低額門檻必須是大於或等於 0 的數字",
     actions: "操作",
@@ -1579,6 +1582,7 @@ const ja: Messages = {
     importSuccess: "「{group}」へ取込完了：新規 {imported}、既存 {reused}、スキップ {skipped}",
     template: "テンプレート",
     balance: "残高",
+    subscription: "サブスクリプション",
     threshold: "残高警告値",
     thresholdInvalid: "残高警告値には 0 以上の数値を入力してください",
     actions: "操作",
@@ -2035,6 +2039,7 @@ const en: Messages = {
     importSuccess: "Imported into “{group}”: {imported} new, {reused} existing, {skipped} skipped",
     template: "Template",
     balance: "Balance",
+    subscription: "Subscription",
     threshold: "Low threshold",
     thresholdInvalid: "Low threshold must be a number greater than or equal to 0",
     actions: "Actions",

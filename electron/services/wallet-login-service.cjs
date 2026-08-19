@@ -134,9 +134,15 @@ class WalletLoginService {
     loginSession.on('will-download', preventDownload)
     window.once('closed', () => {
       void Promise.allSettled([
-        loginSession.clearStorageData(),
-        loginSession.clearCache(),
-        loginSession.clearAuthCache(),
+        (async () => {
+          try { await loginSession.clearStorageData() } catch {}
+        })(),
+        (async () => {
+          try { await loginSession.clearCache() } catch {}
+        })(),
+        (async () => {
+          try { await loginSession.clearAuthCache() } catch {}
+        })(),
       ])
     })
     const walletService = this.walletService
@@ -152,12 +158,23 @@ class WalletLoginService {
 
       const cleanup = () => {
         clearInterval(timer)
-        window.webContents.removeListener('did-finish-load', readSession)
-        window.webContents.removeListener('did-fail-load', didFailLoad)
-        window.webContents.removeListener('will-navigate', willNavigate)
-        window.webContents.removeListener('will-redirect', willNavigate)
-        loginSession.removeListener('will-download', preventDownload)
-        window.removeListener('closed', cancel)
+        // 窗口已销毁时，webContents/session 对象会抛 "Object has been destroyed"，
+        // 手动关闭窗口触发的 closed → cancel → cleanup 路径必须安全跳过。
+        const alive = !window.isDestroyed()
+        if (alive) {
+          try {
+            window.webContents.removeListener('did-finish-load', readSession)
+            window.webContents.removeListener('did-fail-load', didFailLoad)
+            window.webContents.removeListener('will-navigate', willNavigate)
+            window.webContents.removeListener('will-redirect', willNavigate)
+          } catch {}
+        }
+        try {
+          loginSession.removeListener('will-download', preventDownload)
+        } catch {}
+        try {
+          window.removeListener('closed', cancel)
+        } catch {}
       }
       const closeWindow = () => {
         if (!window.isDestroyed()) window.close()
@@ -218,7 +235,8 @@ class WalletLoginService {
             const wallet = await walletService.importSub2ApiSession(target.id, session)
             complete(wallet)
           } catch (error) {
-            if (closeRequested) fail(error)
+            // 用户已手动关闭窗口 = 取消，静默结束；只有窗口还开着时才按失败重试
+            if (closeRequested) cancelNow()
             else retryAt = Date.now() + SESSION_RETRY_MS
           }
         } finally {

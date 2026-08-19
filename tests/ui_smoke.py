@@ -415,7 +415,7 @@ with sync_playwright() as playwright:
     page.get_by_role("heading", name="Config", exact=True).wait_for()
     assert page.get_by_text("Codex tool bridge").count() == 0
     assert page.locator(".settings-row-copy small").count() == 0
-    assert page.get_by_text("Current version 1.9.0", exact=True).is_visible()
+    assert page.get_by_text("Current version 1.9.2", exact=True).is_visible()
 
     # 深色主题恢复原有的高对比信息蓝。
     page.get_by_role("radio", name="β FIELD", exact=True).click()
